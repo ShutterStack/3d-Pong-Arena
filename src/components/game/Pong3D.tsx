@@ -184,18 +184,25 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     floor.receiveShadow = true;
     scene.add(floor);
     
-    const wallMaterial = new THREE.MeshStandardMaterial({ color: arenaColor, emissive: arenaColor, emissiveIntensity: 0.2, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
-    const sideWallGeometry = new THREE.BoxGeometry(0.2, arenaHeight, arenaDepth);
+    const wallLineMaterial = new THREE.MeshStandardMaterial({
+        color: arenaColor,
+        emissive: arenaColor,
+        emissiveIntensity: 0.3,
+    });
+    const wallLineGeometry = new THREE.BoxGeometry(0.2, 0.1, arenaDepth);
+    const wallLinesGroup = new THREE.Group();
 
-    const wallLeft = new THREE.Mesh(sideWallGeometry, wallMaterial);
-    wallLeft.position.x = -arenaWidth / 2;
-    wallLeft.position.y = arenaHeight / 2;
-    scene.add(wallLeft);
-    
-    const wallRight = new THREE.Mesh(sideWallGeometry, wallMaterial);
-    wallRight.position.x = arenaWidth / 2;
-    wallRight.position.y = arenaHeight / 2;
-    scene.add(wallRight);
+    for (let i = 0; i < arenaHeight; i += 2) {
+        const lineLeft = new THREE.Mesh(wallLineGeometry, wallLineMaterial);
+        lineLeft.position.set(-arenaWidth / 2, i, 0);
+        wallLinesGroup.add(lineLeft);
+
+        const lineRight = new THREE.Mesh(wallLineGeometry, wallLineMaterial);
+        lineRight.position.set(arenaWidth / 2, i, 0);
+        wallLinesGroup.add(lineRight);
+    }
+    scene.add(wallLinesGroup);
+
 
     const grid = new THREE.GridHelper(arenaDepth, 10, arenaColor, arenaColor);
     grid.position.y = 0.01;
@@ -244,7 +251,14 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     scene.add(ball);
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const hemisphereLight = new THREE.HemisphereLight(arenaColor, 0x0A0A0A, 0.6);
+    scene.add(hemisphereLight);
+
+    const opponentLight = new THREE.PointLight(opponentColor, 2, 25);
+    opponentLight.position.set(0, 5, -arenaDepth / 2);
+    scene.add(opponentLight);
+
     const topLight = new THREE.DirectionalLight(arenaColor, 0.5);
     topLight.position.set(0, 10, 0);
     topLight.castShadow = true;
@@ -309,12 +323,20 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
     const onMouseMove = (event: MouseEvent) => {
-        if (gameStateRef.current !== 'playing') return;
+        if (gameStateRef.current !== 'playing' && settings.cameraView !== 'third-person') return;
+        if (settings.cameraView === 'first-person' && document.pointerLockElement !== currentMount) return;
+
         const movementX = event.movementX || 0;
         const movementY = event.movementY || 0;
         cameraOrbit.current.theta -= movementX * 0.002;
-        cameraOrbit.current.phi -= movementY * 0.002;
-        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.1, Math.PI - 0.1);
+
+        if (settings.cameraView !== 'third-person') {
+          cameraOrbit.current.phi -= movementY * 0.002;
+          cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.1, Math.PI - 0.1);
+        } else {
+           cameraOrbit.current.phi -= movementY * 0.002;
+           cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, Math.PI * 0.1, Math.PI * 0.6);
+        }
     };
     const onKeyDown = (event: KeyboardEvent) => {
         keysPressed.current[event.key.toLowerCase()] = true;
@@ -325,7 +347,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const onClick = () => {
         if (gameStateRef.current === 'start') {
             const requestLock = () => {
-                try { mountRef.current?.requestPointerLock() } catch (e) { console.warn("Could not request pointer lock:", e) }
+                try { 
+                    if (settings.cameraView === 'first-person') {
+                        currentMount?.requestPointerLock() 
+                    }
+                } catch (e) { console.warn("Could not request pointer lock:", e) }
             };
 
             if (isMultiplayer) {
@@ -355,6 +381,8 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         const currentGamedata = gameDataRef.current;
 
         particleSystem.rotation.y += 0.0002;
+        wallLineMaterial.emissiveIntensity = Math.abs(Math.sin(gameTime.current * 2)) * 0.5 + 0.2;
+
 
         if (gameStateRef.current === 'playing') {
             gameTime.current += delta;
@@ -471,9 +499,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
-            camera.position.set(0, 20, arenaDepth / 2 + 15);
-            camTarget.set(0, 0, 0);
-            camera.lookAt(camTarget);
+            const distance = 45;
+            camera.position.x = distance * Math.sin(cameraOrbit.current.phi) * Math.cos(cameraOrbit.current.theta);
+            camera.position.y = distance * Math.cos(cameraOrbit.current.phi);
+            camera.position.z = distance * Math.sin(cameraOrbit.current.phi) * Math.sin(cameraOrbit.current.theta);
+            camera.lookAt(scene.position);
         } else { // top-down
             camera.position.set(0, 40, 0);
             camTarget.set(0, 0, 0);
@@ -554,7 +584,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
        />
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
-            try { mountRef.current?.requestPointerLock() } catch (e) { console.warn("Could not re-lock pointer:", e) }
+            try { 
+              if (settings?.cameraView === 'first-person') {
+                mountRef.current?.requestPointerLock();
+              }
+            } catch (e) { console.warn("Could not re-lock pointer:", e) }
             if(isMultiplayer && isHost.current){
                 updateGameState(gameId, 'playing');
             } else if (!isMultiplayer) {
