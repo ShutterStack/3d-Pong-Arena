@@ -37,7 +37,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
   const gameDataRef = useRef(gameData);
 
   const [score, setScore] = useState({ player: 0, opponent: 0 });
+  const scoreRef = useRef(score);
+
   const [gameState, setGameState] = useState<'start' | 'playing' | 'paused' | 'gameOver'>('start');
+  const gameStateRef = useRef(gameState);
+
   const [winner, setWinner] = useState<'player' | 'opponent' | null>(null);
   const [settings, setSettings] = useState<GameSettings | null>(null);
   const [customization, setCustomization] = useState<CustomizationSettings | null>(null);
@@ -66,11 +70,20 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         player: gameData.score[localPlayerKey],
         opponent: gameData.score[opponentKey],
       });
-      if (gameData.state === 'playing') {
+      if (gameData.state === 'playing' && gameStateRef.current !== 'playing') {
         setGameState('playing');
       }
     }
   }, [gameData, playerId]);
+  
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+  
+  useEffect(() => {
+    scoreRef.current = score;
+  }, [score]);
+
 
   useEffect(() => {
     setPlayerId(getPlayerId());
@@ -275,8 +288,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     };
 
     const ballVelocity = new THREE.Vector3(0, 0, -15);
-    let localGameState = 'start';
-    let localScore = { player: 0, opponent: 0 };
     
     const resetBall = (direction: number) => {
         const newBallState = {
@@ -305,7 +316,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
     const onMouseMove = (event: MouseEvent) => {
-        if (localGameState !== 'playing') return;
+        if (gameStateRef.current !== 'playing') return;
         const movementX = event.movementX || 0;
         const movementY = event.movementY || 0;
         cameraOrbit.current.theta -= movementX * 0.002;
@@ -319,8 +330,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         keysPressed.current[event.key.toLowerCase()] = false;
     };
     const onClick = () => {
-        const currentGamedata = gameDataRef.current;
-        if (localGameState === 'start') {
+        if (gameStateRef.current === 'start') {
             const requestLock = () => {
                 const promise = currentMount.requestPointerLock();
                 if (promise && typeof promise.catch === 'function') {
@@ -329,16 +339,14 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             };
 
             if (isMultiplayer) {
-              if (currentGamedata?.players.player1 && currentGamedata?.players.player2) {
-                 localGameState = 'playing';
+              if (gameDataRef.current?.players.player1 && gameDataRef.current?.players.player2) {
                  setGameState('playing');
-                 if (currentGamedata.players.player1.id === playerId) { // Only host starts game
+                 if (gameDataRef.current.players.player1.id === playerId) { // Only host starts game
                     updateScore(gameId, { player1: 0, player2: 0 }, 'playing');
                  }
                  requestLock();
               }
             } else {
-              localGameState = 'playing';
               setGameState('playing');
               requestLock();
             }
@@ -359,7 +367,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
         particleSystem.rotation.y += 0.0002;
 
-        if (localGameState === 'playing') {
+        if (gameStateRef.current === 'playing') {
             gameTime.current += delta;
             
             const paddleSpeed = 20 * delta;
@@ -428,33 +436,44 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             
             if (ball.position.z > arenaDepth / 2) { // Opponent scores
                 if (!isMultiplayer || (currentGamedata?.players.player1.id === playerId)) {
-                  localScore.opponent++;
-                  setScore({...localScore});
+                  const newScoreState = { player: scoreRef.current.player, opponent: scoreRef.current.opponent + 1 };
+                  if (isMultiplayer) updateScore(gameId, { player1: newScoreState.player, player2: newScoreState.opponent });
+                  else setScore(newScoreState);
                   scoreSound.triggerAttackRelease('A4', '8n');
-                  if (isMultiplayer) updateScore(gameId, { player1: localScore.player, player2: localScore.opponent });
                   resetBall(-1);
                 }
             }
             if (ball.position.z < -arenaDepth / 2) { // Player scores
                 if (!isMultiplayer || (currentGamedata?.players.player1.id === playerId)) {
-                  localScore.player++;
-                  setScore({...localScore});
+                  const newScoreState = { player: scoreRef.current.player + 1, opponent: scoreRef.current.opponent };
+                  if (isMultiplayer) updateScore(gameId, { player1: newScoreState.player, player2: newScoreState.opponent });
+                  else setScore(newScoreState);
                   scoreSound.triggerAttackRelease('C5', '8n');
-                  if (isMultiplayer) updateScore(gameId, { player1: localScore.player, player2: localScore.opponent });
                   resetBall(1);
                 }
             }
             
-            const finalScore = isMultiplayer && currentGamedata ? currentGamedata.score : localScore;
-            if (finalScore.player1 >= WINNING_SCORE || finalScore.player2 >= WINNING_SCORE || finalScore.player >= WINNING_SCORE || finalScore.opponent >= WINNING_SCORE) {
-                localGameState = 'gameOver';
+            const finalScore = isMultiplayer && currentGamedata ? currentGamedata.score : scoreRef.current;
+            const playerWon = isMultiplayer ? finalScore.player1 >= WINNING_SCORE : finalScore.player >= WINNING_SCORE;
+            const opponentWon = isMultiplayer ? finalScore.player2 >= WINNING_SCORE : finalScore.opponent >= WINNING_SCORE;
+
+            if (playerWon || opponentWon) {
                 setGameState('gameOver');
-                const pScore = isMultiplayer ? finalScore.player1 : finalScore.player;
-                const oScore = isMultiplayer ? finalScore.player2 : finalScore.opponent;
-                const gameWinner = pScore >= WINNING_SCORE ? 'player' : 'opponent';
+                
+                const localPlayerKey = isMultiplayer ? (currentGamedata!.players.player1.id === playerId ? 'player1' : 'player2') : 'player';
+                
+                const pScore = isMultiplayer ? finalScore[localPlayerKey]! : finalScore.player;
+                const oScore = isMultiplayer ? finalScore[localPlayerKey === 'player1' ? 'player2' : 'player1']! : finalScore.opponent;
+
+                const gameWinner = (isMultiplayer ? (pScore >= WINNING_SCORE) : playerWon) ? 'player' : 'opponent';
                 setWinner(gameWinner);
-                document.exitPointerLock();
+
+                if (document.pointerLockElement) {
+                    document.exitPointerLock();
+                }
+                
                 router.push(`/game-over?winner=${gameWinner}&playerScore=${pScore}&opponentScore=${oScore}`);
+                return;
             }
         }
         
@@ -518,9 +537,12 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     window.addEventListener('resize', handleResize);
 
     const onPointerLockChange = () => {
-        if (document.pointerLockElement !== currentMount) {
-             if (gameTime.current > 0.1) {
-                localGameState = 'paused';
+        if (document.pointerLockElement === currentMount) {
+            if (gameStateRef.current === 'paused') {
+                setGameState('playing');
+            }
+        } else {
+             if (gameStateRef.current === 'playing' && gameTime.current > 0.1) {
                 setGameState('paused');
             }
         }
@@ -572,14 +594,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
        />
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
-            if (mountRef.current) {
-                const promise = mountRef.current.requestPointerLock();
-                if (promise && typeof promise.catch === 'function') {
-                    promise.catch((e: any) => console.warn("Could not request pointer lock:", e));
-                }
-                localGameState = 'playing';
-                setGameState('playing');
-            }
+            mountRef.current?.requestPointerLock().catch(e => console.warn("Could not re-lock pointer:", e));
         }}>
              <div className="text-center bg-black/50 p-6 rounded-lg">
                 <h1 className="text-4xl font-bold text-white">Paused</h1>
