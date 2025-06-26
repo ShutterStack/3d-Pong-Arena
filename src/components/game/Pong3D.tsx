@@ -461,18 +461,21 @@ const Pong3D = () => {
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
-            const offset = new THREE.Vector3(0, 7, 12);
-            const quaternion = new THREE.Quaternion().setFromEuler(
-              new THREE.Euler(0, cameraOrbit.current.theta, 0, 'YXZ')
-            );
-            const rotatedOffset = offset.clone().applyQuaternion(quaternion);
-            const targetPosition = playerPaddle.position.clone().add(rotatedOffset);
-            
-            camera.position.lerp(targetPosition, 0.05);
+            const orbitRadius = 45; // A good distance to see the whole arena
+            const pivotPoint = new THREE.Vector3(0, 2, 0); // The point the camera orbits around.
 
-            const lookAtPosition = playerPaddle.position.clone();
-            lookAtPosition.y = 1.5;
-            camera.lookAt(lookAtPosition);
+            // To start behind the player, we offset the theta from the first-person view.
+            const thirdPersonTheta = cameraOrbit.current.theta - Math.PI;
+
+            // Spherical coordinates to Cartesian
+            const x = pivotPoint.x + orbitRadius * Math.sin(cameraOrbit.current.phi) * Math.sin(thirdPersonTheta);
+            const y = pivotPoint.y + orbitRadius * Math.cos(cameraOrbit.current.phi);
+            const z = pivotPoint.z + orbitRadius * Math.sin(cameraOrbit.current.phi) * Math.cos(thirdPersonTheta);
+            
+            const targetPosition = new THREE.Vector3(x, y, z);
+            camera.position.lerp(targetPosition, 0.1);
+
+            camera.lookAt(pivotPoint);
 
         } else { // top-down
             camera.position.set(0, 40, 0);
