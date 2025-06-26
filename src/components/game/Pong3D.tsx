@@ -50,10 +50,13 @@ const Pong3D = () => {
   
   const gameTime = useRef(0);
   const lastPowerupTime = useRef(0);
+  const lastSpeedIncreaseTime = useRef(0);
+  const [showSpeedIncreaseText, setShowSpeedIncreaseText] = useState(false);
+
   const clock = useRef(new THREE.Clock());
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const cameraShake = useRef({ intensity: 0, time: 0 });
-  const cameraOrbit = useRef({ phi: Math.PI / 3, theta: 0 }); // Start behind player, slightly elevated
+  const cameraOrbit = useRef({ phi: Math.PI / 3, theta: 0 });
   const isDragging = useRef(false);
   const previousMousePosition = useRef({ x: 0, y: 0 });
   const particlePool = useRef<THREE.Mesh[]>([]);
@@ -62,11 +65,11 @@ const Pong3D = () => {
   const playerPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
   const opponentPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
 
-
   const difficultyParams = useRef<DifficultyAdjustmentOutput>({
     ballSpeedMultiplier: 1.0,
     ballAngleRandomness: 0.1,
     paddleSizeMultiplier: 1.0,
+    opponentSpeedMultiplier: 1.0,
   });
   
   useEffect(() => {
@@ -208,8 +211,8 @@ const Pong3D = () => {
     scene.add(powerUp.current.mesh);
     
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.2));
-    const hemisphereLight = new THREE.HemisphereLight(arenaColor, 0x0A0A0A, 1.5);
+    scene.add(new THREE.AmbientLight(0xffffff, 2.0));
+    const hemisphereLight = new THREE.HemisphereLight(arenaColor, 0x0A0A0A, 2.5);
     scene.add(hemisphereLight);
 
     const opponentLight = new THREE.PointLight(opponentColor, 3, 25);
@@ -354,6 +357,15 @@ const Pong3D = () => {
         if (gameStateRef.current === 'playing') {
             gameTime.current += delta;
             
+            if (gameTime.current - lastSpeedIncreaseTime.current > 15) {
+                ballVelocity.multiplyScalar(1.1);
+                lastSpeedIncreaseTime.current = gameTime.current;
+                setShowSpeedIncreaseText(true);
+                setTimeout(() => {
+                    setShowSpeedIncreaseText(false);
+                }, 2000);
+            }
+            
             if (Tone.Transport.state !== 'started') {
                 Tone.Transport.start();
                 music.current?.start(0);
@@ -373,7 +385,7 @@ const Pong3D = () => {
                 opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
             }
 
-            opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
+            opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.12 * difficultyParams.current.opponentSpeedMultiplier;
             opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
             ball.position.add(ballVelocity.clone().multiplyScalar(delta));
 
@@ -492,20 +504,33 @@ const Pong3D = () => {
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
-            const orbitRadius = 45;
-            const pivotPoint = new THREE.Vector3(0, 2, 0);
+            const orbitRadius = 25; 
+            const pivotPoint = playerPaddle.position.clone(); 
+            pivotPoint.y = 1;
 
             const theta = cameraOrbit.current.theta;
             const phi = cameraOrbit.current.phi;
 
-            const x = pivotPoint.x + orbitRadius * Math.sin(phi) * Math.sin(theta);
-            const y = pivotPoint.y + orbitRadius * Math.cos(phi);
-            const z = pivotPoint.z + orbitRadius * Math.sin(phi) * Math.cos(theta);
-            
-            const targetPosition = new THREE.Vector3(x, y, z);
-            camera.position.lerp(targetPosition, 0.1);
+            // Start behind player and slightly elevated
+            const baseOffset = new THREE.Vector3(0, 5, 10);
 
-            camera.lookAt(pivotPoint);
+            // Apply orbit rotation
+            const orbitOffset = new THREE.Vector3();
+            orbitOffset.x = orbitRadius * Math.sin(phi) * Math.sin(theta);
+            orbitOffset.y = orbitRadius * Math.cos(phi);
+            orbitOffset.z = orbitRadius * Math.sin(phi) * Math.cos(theta);
+
+            // Combine pivot with base offset and orbit
+            const targetPosition = new THREE.Vector3().copy(pivotPoint);
+            targetPosition.add(baseOffset);
+            
+            camera.position.lerp(targetPosition, 0.1);
+            
+            // Look at a point slightly in front of the paddle
+            const lookAtPoint = playerPaddle.position.clone();
+            lookAtPoint.y = 1;
+            lookAtPoint.z -= 5;
+            camera.lookAt(lookAtPoint);
 
         } else { // top-down
             camera.position.set(0, 40, 0);
@@ -589,6 +614,13 @@ const Pong3D = () => {
         gameState={gameState} 
         winner={winner} 
        />
+        {showSpeedIncreaseText && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                <h1 className="text-5xl font-bold text-primary animate-emerge drop-shadow-[0_5px_15px_rgba(var(--primary-hsl),0.8)]">
+                    SPEED INCREASE
+                </h1>
+            </div>
+        )}
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
             if (mountRef.current) {
