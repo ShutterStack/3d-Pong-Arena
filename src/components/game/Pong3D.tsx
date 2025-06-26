@@ -5,7 +5,6 @@ import * as THREE from 'three';
 import * as Tone from 'tone';
 import { useRouter } from 'next/navigation';
 import { adjustDifficulty, type DifficultyAdjustmentInput, type DifficultyAdjustmentOutput } from '@/ai/flows/dynamic-difficulty-adjustment';
-import { useToast } from '@/hooks/use-toast';
 import HUD from './HUD';
 import { Skeleton } from '../ui/skeleton';
 
@@ -18,21 +17,26 @@ type GameSettings = {
   musicVolume: number;
 };
 
+type CustomizationSettings = {
+  paddleColor: string;
+  ballColor: string;
+}
+
 const Pong3D = () => {
   const mountRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
-  const { toast } = useToast();
 
   const [score, setScore] = useState({ player: 0, opponent: 0 });
   const [gameState, setGameState] = useState<'start' | 'playing' | 'paused' | 'gameOver'>('start');
   const [winner, setWinner] = useState<'player' | 'opponent' | null>(null);
   const [settings, setSettings] = useState<GameSettings | null>(null);
-  const [useMouse, setUseMouse] = useState(true);
+  const [customization, setCustomization] = useState<CustomizationSettings | null>(null);
 
   const gameTime = useRef(0);
   const clock = useRef(new THREE.Clock());
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const cameraShake = useRef({ intensity: 0, time: 0 });
+  const cameraOrbit = useRef({ phi: Math.PI / 2, theta: 0 });
   const particlePool = useRef<THREE.Mesh[]>([]);
 
   const difficultyParams = useRef<DifficultyAdjustmentOutput>({
@@ -46,6 +50,11 @@ const Pong3D = () => {
       const savedSettings = localStorage.getItem('pongSettings');
       const defaultSettings = { cameraView: 'first-person', cameraShake: true, masterVolume: 80, musicVolume: 50 };
       setSettings(savedSettings ? JSON.parse(savedSettings) : defaultSettings);
+
+      const savedCustomization = localStorage.getItem('pongCustomization');
+      const defaultCustomization = { paddleColor: '#7DF9FF', ballColor: '#FFFFFF' };
+      setCustomization(savedCustomization ? JSON.parse(savedCustomization) : defaultCustomization);
+
     } catch (error) {
       console.error("Could not load settings, using defaults.", error);
     }
@@ -74,7 +83,7 @@ const Pong3D = () => {
 
 
   useEffect(() => {
-    if (!mountRef.current || !settings) return;
+    if (!mountRef.current || !settings || !customization) return;
     const currentMount = mountRef.current;
 
     const scene = new THREE.Scene();
@@ -85,12 +94,11 @@ const Pong3D = () => {
     renderer.shadowMap.enabled = true;
     currentMount.appendChild(renderer.domElement);
 
-    const arenaWidth = 12;
-    const arenaHeight = 8;
-    const arenaDepth = 20;
+    const arenaWidth = 24;
+    const arenaHeight = 16;
+    const arenaDepth = 40;
 
-    const primaryColor = 0x7DF9FF;
-    const accentColor = 0xD400FF;
+    const opponentColor = 0xD400FF;
 
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(arenaWidth, arenaDepth), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }));
     floor.rotation.x = -Math.PI / 2;
@@ -101,8 +109,8 @@ const Pong3D = () => {
     const particles = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
     const particleColors = new Float32Array(particleCount * 3);
-    const pPrimary = new THREE.Color(primaryColor);
-    const pAccent = new THREE.Color(accentColor);
+    const pPrimary = new THREE.Color(customization.paddleColor);
+    const pAccent = new THREE.Color(opponentColor);
 
     for (let i = 0; i < particleCount; i++) {
         const i3 = i * 3;
@@ -132,29 +140,29 @@ const Pong3D = () => {
     scene.add(particleSystem);
 
 
-    const paddleGeometry = new THREE.BoxGeometry(2, 1, 0.2);
-    const playerPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: primaryColor, emissive: primaryColor, emissiveIntensity: 0.5 }));
-    playerPaddle.position.z = arenaDepth / 2 - 1;
+    const paddleGeometry = new THREE.BoxGeometry(4, 2, 0.4);
+    const playerPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: customization.paddleColor, emissive: customization.paddleColor, emissiveIntensity: 0.5 }));
+    playerPaddle.position.z = arenaDepth / 2 - 2;
     playerPaddle.position.y = 1;
     playerPaddle.castShadow = true;
     scene.add(playerPaddle);
 
-    const opponentPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: accentColor, emissive: accentColor, emissiveIntensity: 0.5 }));
-    opponentPaddle.position.z = -arenaDepth / 2 + 1;
+    const opponentPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: opponentColor, emissive: opponentColor, emissiveIntensity: 0.5 }));
+    opponentPaddle.position.z = -arenaDepth / 2 + 2;
     opponentPaddle.position.y = 1;
     opponentPaddle.castShadow = true;
     scene.add(opponentPaddle);
 
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.2, 32, 32), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.8 }));
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(0.4, 32, 32), new THREE.MeshStandardMaterial({ color: customization.ballColor, emissive: customization.ballColor, emissiveIntensity: 0.8 }));
     ball.castShadow = true;
     scene.add(ball);
-    ball.add(new THREE.PointLight(0xffffff, 2, 5));
+    ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.2));
-    const topLight = new THREE.DirectionalLight(primaryColor, 0.5);
+    const topLight = new THREE.DirectionalLight(customization.paddleColor, 0.5);
     topLight.position.set(0, 10, 0);
     scene.add(topLight);
-    const bottomLight = new THREE.DirectionalLight(accentColor, 0.5);
+    const bottomLight = new THREE.DirectionalLight(opponentColor, 0.5);
     bottomLight.position.set(0, -10, 0);
     scene.add(bottomLight);
 
@@ -196,14 +204,13 @@ const Pong3D = () => {
         }
     };
 
-    const ballVelocity = new THREE.Vector3(0, 0, -10);
-    const mouse = new THREE.Vector2();
+    const ballVelocity = new THREE.Vector3(0, 0, -15);
     let localGameState = 'start';
     let localScore = { player: 0, opponent: 0 };
     
     const resetBall = (direction: number) => {
         ball.position.set(0, 1, 0);
-        const baseSpeed = 10;
+        const baseSpeed = 15;
         const speed = baseSpeed * difficultyParams.current.ballSpeedMultiplier;
         const angle = (Math.random() - 0.5) * difficultyParams.current.ballAngleRandomness * Math.PI;
         ballVelocity.z = direction * speed * Math.cos(angle);
@@ -213,13 +220,15 @@ const Pong3D = () => {
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
     const onMouseMove = (event: MouseEvent) => {
-        setUseMouse(true);
-        mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-        mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+        if (localGameState !== 'playing') return;
+        const movementX = event.movementX || 0;
+        const movementY = event.movementY || 0;
+        cameraOrbit.current.theta -= movementX * 0.002;
+        cameraOrbit.current.phi -= movementY * 0.002;
+        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.1, Math.PI - 0.1);
     };
     const onKeyDown = (event: KeyboardEvent) => {
         keysPressed.current[event.key.toLowerCase()] = true;
-        setUseMouse(false);
     };
     const onKeyUp = (event: KeyboardEvent) => {
         keysPressed.current[event.key.toLowerCase()] = false;
@@ -228,15 +237,15 @@ const Pong3D = () => {
         if (localGameState === 'start') {
             localGameState = 'playing';
             setGameState('playing');
+            currentMount.requestPointerLock();
         }
     }
-    window.addEventListener('mousemove', onMouseMove);
+    
+    document.addEventListener('mousemove', onMouseMove);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('click', onClick);
+    currentMount.addEventListener('click', onClick);
 
-    const raycaster = new THREE.Raycaster();
-    const paddlePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -playerPaddle.position.z);
 
     let animationFrameId: number;
     const animate = () => {
@@ -248,24 +257,16 @@ const Pong3D = () => {
         if (localGameState === 'playing') {
             gameTime.current += delta;
             
-            if (useMouse) {
-                raycaster.setFromCamera(mouse, camera);
-                const intersectPoint = new THREE.Vector3();
-                raycaster.ray.intersectPlane(paddlePlane, intersectPoint);
-                if (intersectPoint) {
-                    playerPaddle.position.x = intersectPoint.x;
-                }
-            } else {
-                const paddleSpeed = 10 * delta;
-                if (keysPressed.current['a'] || keysPressed.current['arrowleft']) playerPaddle.position.x -= paddleSpeed;
-                if (keysPressed.current['d'] || keysPressed.current['arrowright']) playerPaddle.position.x += paddleSpeed;
-            }
-            playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + 1, arenaWidth / 2 - 1);
+            const paddleSpeed = 20 * delta;
+            if (keysPressed.current['a'] || keysPressed.current['arrowleft']) playerPaddle.position.x -= paddleSpeed;
+            if (keysPressed.current['d'] || keysPressed.current['arrowright']) playerPaddle.position.x += paddleSpeed;
+
+            playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + 2, arenaWidth / 2 - 2);
             playerPaddle.position.y = 1;
             playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
             opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
-            opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 1, arenaWidth/2 - 1);
+            opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
             opponentPaddle.position.y = 1;
             opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
@@ -310,6 +311,7 @@ const Pong3D = () => {
                 setGameState('gameOver');
                 const gameWinner = localScore.player >= WINNING_SCORE ? 'player' : 'opponent';
                 setWinner(gameWinner);
+                document.exitPointerLock();
                 router.push(`/game-over?winner=${gameWinner}&playerScore=${localScore.player}&opponentScore=${localScore.opponent}`);
             }
         }
@@ -325,18 +327,30 @@ const Pong3D = () => {
                 if (p.lifetime <= 0) p.visible = false;
             }
         });
-
+        
         const camTarget = new THREE.Vector3();
+        const spherical = new THREE.Spherical();
+        spherical.phi = cameraOrbit.current.phi;
+        spherical.theta = cameraOrbit.current.theta;
+        
         if (settings.cameraView === 'first-person') {
-            camera.position.x = playerPaddle.position.x * 0.1;
-            camera.position.y = 1.2;
-            camera.position.z = playerPaddle.position.z + 1.5;
-            camTarget.set(playerPaddle.position.x * 0.3, 1, 0);
+            const pivotPoint = playerPaddle.position.clone();
+            pivotPoint.y = 1.5; // Eye level
+            camera.position.copy(pivotPoint);
+            
+            const lookAtPoint = new THREE.Vector3(0,0,-1);
+            lookAtPoint.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraOrbit.current.phi - Math.PI/2, cameraOrbit.current.theta, 0, 'YXZ')));
+            lookAtPoint.add(pivotPoint);
+            camTarget.copy(lookAtPoint);
+
         } else if (settings.cameraView === 'third-person') {
-            camera.position.set(0, 8, arenaDepth / 2 + 6);
+            spherical.radius = 25;
+            const pivotPoint = new THREE.Vector3(0, 2, 0);
+            const offset = new THREE.Vector3().setFromSpherical(spherical);
+            camera.position.copy(pivotPoint).add(offset);
             camTarget.set(0, 2, 0);
         } else { // top-down
-            camera.position.set(0, 15, 0);
+            camera.position.set(0, 25, 0);
             camTarget.set(0, 0, 0);
         }
         
@@ -361,12 +375,25 @@ const Pong3D = () => {
     };
     window.addEventListener('resize', handleResize);
 
+    const onPointerLockChange = () => {
+        if (document.pointerLockElement !== currentMount) {
+            localGameState = 'paused';
+            setGameState('paused');
+        }
+    };
+    document.addEventListener('pointerlockchange', onPointerLockChange, false);
+
+
     return () => {
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('click', onClick);
+      currentMount.removeEventListener('click', onClick);
+      document.removeEventListener('pointerlockchange', onPointerLockChange, false);
+      if (document.pointerLockElement === currentMount) {
+        document.exitPointerLock();
+      }
       cancelAnimationFrame(animationFrameId);
       if (renderer.domElement.parentElement) {
         renderer.domElement.parentElement.removeChild(renderer.domElement);
@@ -375,21 +402,29 @@ const Pong3D = () => {
       scene.clear();
       renderer.dispose();
     };
-  }, [router, settings, useMouse, updateDifficulty]);
+  }, [router, settings, customization, updateDifficulty]);
 
-  if (!settings) {
+  if (!settings || !customization) {
     return (
       <div className="flex h-[calc(100vh-theme(spacing.14))] w-full flex-col items-center justify-center space-y-4 bg-background">
         <Skeleton className="h-1/2 w-4/5" />
-        <p className="text-2xl font-bold text-primary animate-pulse">LOADING SETTINGS...</p>
+        <p className="text-2xl font-bold text-primary animate-pulse">LOADING ASSETS...</p>
       </div>
     );
   }
 
   return (
-    <div className="relative h-full w-full cursor-none">
+    <div className="relative h-full w-full">
       <div ref={mountRef} className="absolute inset-0 z-0" />
       <HUD playerScore={score.player} opponentScore={score.opponent} gameState={gameState} winner={winner} />
+      {gameState === 'paused' && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto">
+             <div className="text-center bg-black/50 p-6 rounded-lg">
+                <h1 className="text-4xl font-bold text-white">Paused</h1>
+                <p className="text-muted-foreground">Click to resume</p>
+            </div>
+        </div>
+      )}
     </div>
   );
 };

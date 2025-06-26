@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Gamepad2, Home, Settings } from "lucide-react";
+import { Gamepad2, Home, Settings, Palette } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
@@ -11,6 +11,7 @@ export default function Header() {
   const navLinks = [
     { href: "/", label: "Home", icon: Home },
     { href: "/settings", label: "Settings", icon: Settings },
+    { href: "/customize", label: "Customize", icon: Palette },
   ];
 
   return (

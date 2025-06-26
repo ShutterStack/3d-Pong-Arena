@@ -4,7 +4,7 @@ import React, { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import * as THREE from 'three';
 import { Button } from '@/components/ui/button';
-import { MoveRight } from 'lucide-react';
+import { MoveRight, Palette } from 'lucide-react';
 
 export default function MainMenu() {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -103,13 +103,19 @@ export default function MainMenu() {
             Experience the next generation of Pong. A fully immersive, 3D sports simulation.
           </p>
           <p className="max-w-xl text-md text-primary/80 font-code">
-            Controls: Use Mouse or WASD/Arrow Keys.
+            Controls: Use A/D or Arrow Keys for paddle. Use Mouse to look around.
           </p>
           <div className="flex justify-center gap-4 pt-4">
             <Link href="/game">
               <Button size="lg" className="font-bold">
                 Start Game
                 <MoveRight className="ml-2 h-5 w-5" />
+              </Button>
+            </Link>
+             <Link href="/customize">
+              <Button size="lg" variant="outline">
+                <Palette className="mr-2 h-5 w-5" />
+                Customize
               </Button>
             </Link>
             <Link href="/settings">
