@@ -66,18 +66,21 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     gameDataRef.current = gameData;
     if (gameData && playerId) {
       isHost.current = gameData.players.player1.id === playerId;
-      const localPlayerKey = isHost.current ? 'player1' : 'player2';
-      const opponentKey = isHost.current ? 'player2' : 'player1';
       
-      setScore({
-        player: gameData.score[localPlayerKey] ?? 0,
-        opponent: gameData.score[opponentKey] ?? 0,
-      });
+      const localPlayerKey = gameData.players.player1.id === playerId ? 'player1' : 'player2';
+      const opponentKey = gameData.players.player1.id === playerId ? 'player2' : 'player1';
+
+      if(gameData.score[localPlayerKey] !== undefined) {
+         setScore({
+          player: gameData.score[localPlayerKey],
+          opponent: gameData.score[opponentKey] ?? 0,
+        });
+      }
 
       if (gameData.state !== gameStateRef.current && gameData.state !== 'waiting') {
         setGameState(gameData.state);
         if(gameData.state === 'playing' && document.pointerLockElement !== mountRef.current){
-             mountRef.current?.requestPointerLock().catch(e => console.warn("Could not re-lock pointer:", e));
+             try { mountRef.current?.requestPointerLock() } catch (e) { console.warn("Could not re-lock pointer:", e) }
         }
       }
     }
@@ -182,7 +185,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     scene.add(floor);
     
     const wallMaterial = new THREE.MeshStandardMaterial({ color: arenaColor, emissive: arenaColor, emissiveIntensity: 0.2, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
-    const wallGeometry = new THREE.BoxGeometry(arenaWidth, arenaHeight, 0.2);
     const sideWallGeometry = new THREE.BoxGeometry(0.2, arenaHeight, arenaDepth);
 
     const wallLeft = new THREE.Mesh(sideWallGeometry, wallMaterial);
@@ -202,8 +204,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const particleCount = 5000;
     const particles = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
-    const pPrimary = new THREE.Color(customization.paddleColor);
-    const pAccent = new THREE.Color(opponentColor);
 
     for (let i = 0; i < particleCount; i++) {
         const i3 = i * 3;
@@ -256,6 +256,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
     const pGeometry = new THREE.SphereGeometry(0.05, 8, 8);
     const pMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+    particlePool.current = []; // Clear before populating
     for (let i = 0; i < 100; i++) {
         const particle = new THREE.Mesh(pGeometry, pMaterial.clone());
         particle.visible = false;
@@ -324,7 +325,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const onClick = () => {
         if (gameStateRef.current === 'start') {
             const requestLock = () => {
-                mountRef.current?.requestPointerLock().catch(e => console.warn("Could not request pointer lock:", e));
+                try { mountRef.current?.requestPointerLock() } catch (e) { console.warn("Could not request pointer lock:", e) }
             };
 
             if (isMultiplayer) {
@@ -370,7 +371,8 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
               const opponentKey = isHost.current ? 'player2' : 'player1';
 
               updatePlayerPaddle(gameId, localPlayerKey, { x: playerPaddle.position.x });
-              if (currentGamedata.paddles[opponentKey]) {
+              
+              if (currentGamedata.paddles && currentGamedata.paddles[opponentKey]) {
                 opponentPaddle.position.x = currentGamedata.paddles[opponentKey].x;
               }
               
@@ -415,7 +417,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
                 if (ball.position.z > arenaDepth / 2) { // Opponent scores
                     const newPlayerScore = isMultiplayer ? currentGamedata!.score.player1 : scoreRef.current.player;
                     const newOpponentScore = (isMultiplayer ? currentGamedata!.score.player2 : scoreRef.current.opponent) + 1;
-                    if (isMultiplayer) updateScore(gameId, { player1: newPlayerScore, player2: newOpponentScore });
+                    if (isMultiplayer && isHost.current) updateScore(gameId, { player1: newPlayerScore, player2: newOpponentScore });
                     else setScore({player: newPlayerScore, opponent: newOpponentScore});
                     scoreSound.triggerAttackRelease('A4', '8n');
                     resetBall(-1);
@@ -423,7 +425,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
                 if (ball.position.z < -arenaDepth / 2) { // Player scores
                     const newPlayerScore = (isMultiplayer ? currentGamedata!.score.player1 : scoreRef.current.player) + 1;
                     const newOpponentScore = isMultiplayer ? currentGamedata!.score.player2 : scoreRef.current.opponent;
-                    if (isMultiplayer) updateScore(gameId, { player1: newPlayerScore, player2: newOpponentScore });
+                    if (isMultiplayer && isHost.current) updateScore(gameId, { player1: newPlayerScore, player2: newOpponentScore });
                     else setScore({player: newPlayerScore, opponent: newOpponentScore});
                     scoreSound.triggerAttackRelease('C5', '8n');
                     resetBall(1);
@@ -432,16 +434,16 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
             const finalScore = scoreRef.current;
             if (finalScore.player >= WINNING_SCORE || finalScore.opponent >= WINNING_SCORE) {
-                const gameWinner = finalScore.player >= WINNING_SCORE ? 'player' : 'opponent';
+                const gameWinner = finalScore.player >= WINNING_SCORE ? (isHost.current ? 'player' : 'opponent') : (isHost.current ? 'opponent' : 'player');
+                
                 if (document.pointerLockElement) document.exitPointerLock();
 
                 if(isMultiplayer && isHost.current){
                     updateGameState(gameId, 'gameOver');
-                } else if (!isMultiplayer) {
-                    setGameState('gameOver');
                 }
+                setGameState('gameOver');
                 
-                router.push(`/game-over?winner=${gameWinner}&playerScore=${finalScore.player}&opponentScore=${finalScore.opponent}`);
+                router.push(`/game-over?winner=${finalScore.player >= WINNING_SCORE ? 'player' : 'opponent'}&playerScore=${finalScore.player}&opponentScore=${finalScore.opponent}`);
                 return;
             }
         }
@@ -459,9 +461,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         });
         
         const camTarget = new THREE.Vector3();
-        const spherical = new THREE.Spherical();
-        spherical.phi = cameraOrbit.current.phi;
-        spherical.theta = cameraOrbit.current.theta;
         
         if (settings.cameraView === 'first-person') {
             const pivotPoint = playerPaddle.position.clone();
@@ -472,17 +471,13 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
-            spherical.radius = 25;
-            const pivotPoint = new THREE.Vector3(0, 2, playerPaddle.position.z + 15);
-            const offset = new THREE.Vector3().setFromSpherical(spherical);
-            offset.y = Math.max(5, offset.y); // prevent camera from going under floor
-            camera.position.copy(pivotPoint).add(offset);
-            camTarget.set(0, 2, 0);
-             camera.lookAt(camTarget);
-        } else { // top-down
-            camera.position.set(0, 30, 0);
+            camera.position.set(0, 20, arenaDepth / 2 + 15);
             camTarget.set(0, 0, 0);
-             camera.lookAt(camTarget);
+            camera.lookAt(camTarget);
+        } else { // top-down
+            camera.position.set(0, 40, 0);
+            camTarget.set(0, 0, 0);
+            camera.lookAt(camTarget);
         }
         
         if (cameraShake.current.time > 0) {
@@ -559,7 +554,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
        />
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
-            mountRef.current?.requestPointerLock().catch(e => console.warn("Could not re-lock pointer:", e));
+            try { mountRef.current?.requestPointerLock() } catch (e) { console.warn("Could not re-lock pointer:", e) }
             if(isMultiplayer && isHost.current){
                 updateGameState(gameId, 'playing');
             } else if (!isMultiplayer) {
