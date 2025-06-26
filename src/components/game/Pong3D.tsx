@@ -184,25 +184,28 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     floor.receiveShadow = true;
     scene.add(floor);
     
-    const wallLineMaterial = new THREE.MeshStandardMaterial({
-        color: arenaColor,
-        emissive: arenaColor,
-        emissiveIntensity: 0.3,
+    const wallMaterial = new THREE.MeshStandardMaterial({
+        color: 0x1a1a1a, // Dark grey solid color
+        metalness: 0.5,
+        roughness: 0.7,
     });
-    const wallLineGeometry = new THREE.BoxGeometry(0.2, 0.1, arenaDepth);
-    const wallLinesGroup = new THREE.Group();
+    
+    const wallHeight = 10;
+    const leftWall = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, wallHeight, arenaDepth),
+        wallMaterial
+    );
+    leftWall.position.set(-arenaWidth / 2 - 0.25, wallHeight / 2, 0);
+    leftWall.receiveShadow = true;
+    scene.add(leftWall);
 
-    for (let i = 0; i < arenaHeight; i += 2) {
-        const lineLeft = new THREE.Mesh(wallLineGeometry, wallLineMaterial);
-        lineLeft.position.set(-arenaWidth / 2, i, 0);
-        wallLinesGroup.add(lineLeft);
-
-        const lineRight = new THREE.Mesh(wallLineGeometry, wallLineMaterial);
-        lineRight.position.set(arenaWidth / 2, i, 0);
-        wallLinesGroup.add(lineRight);
-    }
-    scene.add(wallLinesGroup);
-
+    const rightWall = new THREE.Mesh(
+        new THREE.BoxGeometry(0.5, wallHeight, arenaDepth),
+        wallMaterial
+    );
+    rightWall.position.set(arenaWidth / 2 + 0.25, wallHeight / 2, 0);
+    rightWall.receiveShadow = true;
+    scene.add(rightWall);
 
     const grid = new THREE.GridHelper(arenaDepth, 10, arenaColor, arenaColor);
     grid.position.y = 0.01;
@@ -251,8 +254,8 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     scene.add(ball);
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
-    const hemisphereLight = new THREE.HemisphereLight(arenaColor, 0x0A0A0A, 0.6);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const hemisphereLight = new THREE.HemisphereLight(arenaColor, 0x0A0A0A, 1.0);
     scene.add(hemisphereLight);
 
     const opponentLight = new THREE.PointLight(opponentColor, 2, 25);
@@ -268,9 +271,9 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const scoreSound = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 1 }, }).toDestination();
     Tone.Master.volume.value = Tone.gainToDb(settings.masterVolume / 100);
 
+    particlePool.current = []; // Clear before populating
     const pGeometry = new THREE.SphereGeometry(0.05, 8, 8);
     const pMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
-    particlePool.current = []; // Clear before populating
     for (let i = 0; i < 100; i++) {
         const particle = new THREE.Mesh(pGeometry, pMaterial.clone());
         particle.visible = false;
@@ -381,7 +384,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         const currentGamedata = gameDataRef.current;
 
         particleSystem.rotation.y += 0.0002;
-        wallLineMaterial.emissiveIntensity = Math.abs(Math.sin(gameTime.current * 2)) * 0.5 + 0.2;
 
 
         if (gameStateRef.current === 'playing') {
