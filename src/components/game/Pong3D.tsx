@@ -53,7 +53,9 @@ const Pong3D = () => {
   const clock = useRef(new THREE.Clock());
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const cameraShake = useRef({ intensity: 0, time: 0 });
-  const cameraOrbit = useRef({ phi: Math.PI / 3, theta: Math.PI }); // Start behind player, slightly elevated
+  const cameraOrbit = useRef({ phi: Math.PI / 3, theta: 0 }); // Start behind player, slightly elevated
+  const isDragging = useRef(false);
+  const previousMousePosition = useRef({ x: 0, y: 0 });
   const particlePool = useRef<THREE.Mesh[]>([]);
   const powerUp = useRef<PowerUp | null>(null);
   const music = useRef<Tone.Loop | null>(null);
@@ -279,30 +281,55 @@ const Pong3D = () => {
     };
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
+    const onMouseDown = (event: MouseEvent) => {
+        if (settings?.cameraView === 'third-person' && gameStateRef.current === 'playing') {
+            isDragging.current = true;
+            previousMousePosition.current = { x: event.clientX, y: event.clientY };
+        }
+    };
+    const onMouseUp = () => {
+        isDragging.current = false;
+    };
+    const onMouseLeave = () => {
+        isDragging.current = false;
+    };
+
     const onMouseMove = (event: MouseEvent) => {
         if (gameStateRef.current !== 'playing') return;
-        if (document.pointerLockElement !== currentMount) return;
 
-        const movementX = event.movementX || 0;
-        const movementY = event.movementY || 0;
-        cameraOrbit.current.theta -= movementX * 0.002;
-        cameraOrbit.current.phi -= movementY * 0.002;
-        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.5, Math.PI - 0.5);
+        if (settings.cameraView === 'first-person') {
+            if (document.pointerLockElement !== currentMount) return;
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+            cameraOrbit.current.theta -= movementX * 0.002;
+            cameraOrbit.current.phi -= movementY * 0.002;
+        } else if (settings.cameraView === 'third-person') {
+            if (!isDragging.current) return;
+            const deltaX = event.clientX - previousMousePosition.current.x;
+            const deltaY = event.clientY - previousMousePosition.current.y;
+            cameraOrbit.current.theta -= deltaX * 0.005;
+            cameraOrbit.current.phi -= deltaY * 0.005;
+            previousMousePosition.current = { x: event.clientX, y: event.clientY };
+        }
+
+        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.5, (Math.PI / 2) + 0.4);
     };
+
     const onKeyDown = (event: KeyboardEvent) => { keysPressed.current[event.key.toLowerCase()] = true; };
     const onKeyUp = (event: KeyboardEvent) => { keysPressed.current[event.key.toLowerCase()] = false; };
     
     const onClick = () => {
         if (gameStateRef.current === 'start' && currentMount) {
             setGameState('playing');
-            try {
-                currentMount.requestPointerLock();
-            } catch (e) {
-                console.warn("Could not request pointer lock:", e);
+            if (settings.cameraView === 'first-person') {
+                try { currentMount.requestPointerLock() } catch (e) { console.warn("Could not request pointer lock:", e) }
             }
         }
     }
     
+    currentMount.addEventListener('mousedown', onMouseDown);
+    currentMount.addEventListener('mouseup', onMouseUp);
+    currentMount.addEventListener('mouseleave', onMouseLeave);
     document.addEventListener('mousemove', onMouseMove);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -465,16 +492,15 @@ const Pong3D = () => {
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
-            const orbitRadius = 45; // A good distance to see the whole arena
-            const pivotPoint = new THREE.Vector3(0, 2, 0); // The point the camera orbits around.
+            const orbitRadius = 45;
+            const pivotPoint = new THREE.Vector3(0, 2, 0);
 
-            // To start behind the player, we offset the theta from the first-person view.
-            const thirdPersonTheta = cameraOrbit.current.theta - Math.PI;
+            const theta = cameraOrbit.current.theta;
+            const phi = cameraOrbit.current.phi;
 
-            // Spherical coordinates to Cartesian
-            const x = pivotPoint.x + orbitRadius * Math.sin(cameraOrbit.current.phi) * Math.sin(thirdPersonTheta);
-            const y = pivotPoint.y + orbitRadius * Math.cos(cameraOrbit.current.phi);
-            const z = pivotPoint.z + orbitRadius * Math.sin(cameraOrbit.current.phi) * Math.cos(thirdPersonTheta);
+            const x = pivotPoint.x + orbitRadius * Math.sin(phi) * Math.sin(theta);
+            const y = pivotPoint.y + orbitRadius * Math.cos(phi);
+            const z = pivotPoint.z + orbitRadius * Math.sin(phi) * Math.cos(theta);
             
             const targetPosition = new THREE.Vector3(x, y, z);
             camera.position.lerp(targetPosition, 0.1);
@@ -508,7 +534,7 @@ const Pong3D = () => {
 
     const onPointerLockChange = () => {
       const isLocked = document.pointerLockElement === currentMount;
-      if (!isLocked && gameStateRef.current === 'playing' && gameTime.current > 0.1) {
+      if (!isLocked && gameStateRef.current === 'playing' && gameTime.current > 0.1 && settings.cameraView === 'first-person') {
           setGameState('paused');
       }
     };
@@ -521,6 +547,9 @@ const Pong3D = () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       currentMount.removeEventListener('click', onClick);
+      currentMount.removeEventListener('mousedown', onMouseDown);
+      currentMount.removeEventListener('mouseup', onMouseUp);
+      currentMount.removeEventListener('mouseleave', onMouseLeave);
       document.removeEventListener('pointerlockchange', onPointerLockChange, false);
       if (document.pointerLockElement === currentMount) {
         document.exitPointerLock();
@@ -563,10 +592,12 @@ const Pong3D = () => {
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
             if (mountRef.current) {
-                try { 
-                    mountRef.current.requestPointerLock();
-                } catch (e) { 
-                    console.warn("Could not re-lock pointer:", e);
+                if (settings.cameraView === 'first-person') {
+                    try { 
+                        mountRef.current.requestPointerLock();
+                    } catch (e) { 
+                        console.warn("Could not re-lock pointer:", e);
+                    }
                 }
             }
             setGameState('playing');
