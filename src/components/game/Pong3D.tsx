@@ -254,7 +254,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const scoreSound = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 1 }, }).toDestination();
     Tone.Master.volume.value = Tone.gainToDb(settings.masterVolume / 100);
 
-    const particlePool = useRef<THREE.Mesh[]>([]);
     const pGeometry = new THREE.SphereGeometry(0.05, 8, 8);
     const pMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
     for (let i = 0; i < 100; i++) {
