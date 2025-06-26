@@ -322,10 +322,9 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         const currentGamedata = gameDataRef.current;
         if (localGameState === 'start') {
             const requestLock = () => {
-                try {
-                    currentMount.requestPointerLock();
-                } catch (e) {
-                    console.warn("Could not request pointer lock:", e);
+                const promise = currentMount.requestPointerLock();
+                if (promise && typeof promise.catch === 'function') {
+                    promise.catch((e: any) => console.warn("Could not request pointer lock:", e));
                 }
             };
 
@@ -520,8 +519,10 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
     const onPointerLockChange = () => {
         if (document.pointerLockElement !== currentMount) {
-            localGameState = 'paused';
-            setGameState('paused');
+             if (gameTime.current > 0.1) {
+                localGameState = 'paused';
+                setGameState('paused');
+            }
         }
     };
     document.addEventListener('pointerlockchange', onPointerLockChange, false);
@@ -572,11 +573,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
             if (mountRef.current) {
-                try {
-                  mountRef.current.requestPointerLock();
-                } catch (e) {
-                  console.warn("Could not request pointer lock:", e);
+                const promise = mountRef.current.requestPointerLock();
+                if (promise && typeof promise.catch === 'function') {
+                    promise.catch((e: any) => console.warn("Could not request pointer lock:", e));
                 }
+                localGameState = 'playing';
                 setGameState('playing');
             }
         }}>
