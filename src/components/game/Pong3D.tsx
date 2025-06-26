@@ -293,9 +293,13 @@ const Pong3D = () => {
     const onKeyUp = (event: KeyboardEvent) => { keysPressed.current[event.key.toLowerCase()] = false; };
     
     const onClick = () => {
-        if (gameStateRef.current === 'start') {
+        if (gameStateRef.current === 'start' && currentMount) {
             setGameState('playing');
-            try { currentMount?.requestPointerLock() } catch (e) { console.warn("Could not request pointer lock:", e) }
+            try {
+                currentMount.requestPointerLock();
+            } catch (e) {
+                console.warn("Could not request pointer lock:", e);
+            }
         }
     }
     
@@ -558,9 +562,13 @@ const Pong3D = () => {
        />
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
-            try { 
-                mountRef.current?.requestPointerLock();
-            } catch (e) { console.warn("Could not re-lock pointer:", e) }
+            if (mountRef.current) {
+                try { 
+                    mountRef.current.requestPointerLock();
+                } catch (e) { 
+                    console.warn("Could not re-lock pointer:", e);
+                }
+            }
             setGameState('playing');
         }}>
              <div className="text-center bg-black/50 p-6 rounded-lg">
