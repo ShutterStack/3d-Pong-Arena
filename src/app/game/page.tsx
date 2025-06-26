@@ -1,7 +1,9 @@
+
 "use client";
 
 import dynamic from 'next/dynamic'
 import { Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Skeleton } from '@/components/ui/skeleton';
 
 const Pong3D = dynamic(() => import('@/components/game/Pong3D'), {
@@ -13,6 +15,14 @@ const Pong3D = dynamic(() => import('@/components/game/Pong3D'), {
     </div>
 })
 
+function GamePageContent() {
+  const searchParams = useSearchParams();
+  const gameId = searchParams.get('gameId') || 'single-player';
+
+  return <Pong3D gameId={gameId} />;
+}
+
+
 export default function GamePage() {
   return (
     <div className="h-[calc(100vh-theme(spacing.14))] w-full bg-black">
@@ -22,7 +32,7 @@ export default function GamePage() {
           <p className="text-2xl font-bold text-primary animate-pulse">LOADING ARENA...</p>
         </div>
       }>
-        <Pong3D />
+        <GamePageContent />
       </Suspense>
     </div>
   )

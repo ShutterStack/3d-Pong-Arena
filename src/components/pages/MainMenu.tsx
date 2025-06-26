@@ -1,13 +1,47 @@
+
 "use client";
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import * as THREE from 'three';
 import { Button } from '@/components/ui/button';
-import { MoveRight, Palette } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { MoveRight, Palette, Users, Swords } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
 
 export default function MainMenu() {
   const mountRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const { toast } = useToast();
+  const [joinCode, setJoinCode] = useState('');
+  const [isMultiplayerDialogOpen, setIsMultiplayerDialogOpen] = useState(false);
+
+  const createMultiplayerGame = () => {
+    const gameId = Math.random().toString(36).substring(2, 8).toUpperCase();
+    toast({
+      title: "Game Created!",
+      description: `Your game code is: ${gameId}. Share it with a friend!`,
+      duration: 10000,
+    });
+    router.push(`/game?gameId=${gameId}`);
+    setIsMultiplayerDialogOpen(false);
+  };
+
+  const joinMultiplayerGame = () => {
+      if (joinCode.trim()) {
+          router.push(`/game?gameId=${joinCode.trim().toUpperCase()}`);
+          setIsMultiplayerDialogOpen(false);
+      } else {
+        toast({
+            title: "Error",
+            description: "Please enter a game code.",
+            variant: "destructive",
+        })
+      }
+  };
+
 
   useEffect(() => {
     if (!mountRef.current) return;
@@ -108,16 +142,43 @@ export default function MainMenu() {
           <div className="flex justify-center gap-4 pt-4">
             <Link href="/game">
               <Button size="lg" className="font-bold">
-                Start Game
+                Single Player
                 <MoveRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
-             <Link href="/customize">
-              <Button size="lg" variant="outline">
-                <Palette className="mr-2 h-5 w-5" />
-                Customize
-              </Button>
-            </Link>
+
+            <Dialog open={isMultiplayerDialogOpen} onOpenChange={setIsMultiplayerDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="lg" variant="outline">
+                  <Users className="mr-2 h-5 w-5" />
+                  Multiplayer
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Multiplayer Arena</DialogTitle>
+                  <DialogDescription>
+                    Create a new game to challenge a friend, or join an existing game using a code.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <Button onClick={createMultiplayerGame} className="w-full">
+                        <Swords className="mr-2 h-5 w-5" />
+                        Create Game
+                    </Button>
+                    <div className="flex items-center space-x-2">
+                        <Input 
+                            placeholder="Enter Game Code" 
+                            value={joinCode}
+                            onChange={(e) => setJoinCode(e.target.value)}
+                            className="flex-grow"
+                        />
+                        <Button onClick={joinMultiplayerGame} variant="secondary">Join</Button>
+                    </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+
             <Link href="/settings">
               <Button size="lg" variant="outline">
                 Settings

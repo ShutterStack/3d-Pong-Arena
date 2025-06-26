@@ -1,3 +1,4 @@
+
 "use client";
 
 import React from 'react';
@@ -8,9 +9,10 @@ interface HUDProps {
   opponentScore: number;
   gameState: 'start' | 'playing' | 'paused' | 'gameOver';
   winner?: 'player' | 'opponent' | null;
+  isMultiplayer: boolean;
 }
 
-const HUD: React.FC<HUDProps> = ({ playerScore, opponentScore, gameState }) => {
+const HUD: React.FC<HUDProps> = ({ playerScore, opponentScore, gameState, isMultiplayer }) => {
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-between p-8 text-white font-headline">
       <div className="w-full flex justify-between items-start">
@@ -31,7 +33,8 @@ const HUD: React.FC<HUDProps> = ({ playerScore, opponentScore, gameState }) => {
       {gameState === 'start' && (
         <div className="text-center bg-black/50 p-6 rounded-lg">
           <h1 className="text-4xl font-bold animate-pulse">Click to Start</h1>
-          <p className="text-muted-foreground">Use Mouse or WASD/Arrow Keys to control your paddle.</p>
+          <p className="text-muted-foreground">Use Mouse to look around. Use A/D or Arrow Keys for paddle.</p>
+           {isMultiplayer && <p className="text-primary/80 mt-2">Waiting for opponent... (Multiplayer coming soon!)</p>}
         </div>
       )}
 

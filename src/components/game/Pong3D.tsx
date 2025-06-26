@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
@@ -22,7 +23,7 @@ type CustomizationSettings = {
   ballColor: string;
 }
 
-const Pong3D = () => {
+const Pong3D = ({ gameId }: { gameId: string }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -31,6 +32,8 @@ const Pong3D = () => {
   const [winner, setWinner] = useState<'player' | 'opponent' | null>(null);
   const [settings, setSettings] = useState<GameSettings | null>(null);
   const [customization, setCustomization] = useState<CustomizationSettings | null>(null);
+  
+  const isMultiplayer = gameId !== 'single-player';
 
   const gameTime = useRef(0);
   const clock = useRef(new THREE.Clock());
@@ -61,6 +64,7 @@ const Pong3D = () => {
   }, []);
 
   const updateDifficulty = useCallback(async () => {
+    if (isMultiplayer) return; // No AI difficulty in multiplayer
     try {
       const input: DifficultyAdjustmentInput = {
         playerScore: score.player,
@@ -73,7 +77,7 @@ const Pong3D = () => {
     } catch (error) {
       console.error("Failed to adjust difficulty:", error);
     }
-  }, [score.player, score.opponent]);
+  }, [score.player, score.opponent, isMultiplayer]);
 
   useEffect(() => {
     if (gameState === 'playing' && (score.player > 0 || score.opponent > 0)) {
@@ -99,11 +103,31 @@ const Pong3D = () => {
     const arenaDepth = 40;
 
     const opponentColor = 0xD400FF;
+    const playerColor = new THREE.Color(customization.paddleColor);
 
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(arenaWidth, arenaDepth), new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.9 }));
+    const floor = new THREE.Mesh(
+        new THREE.PlaneGeometry(arenaWidth, arenaDepth), 
+        new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.1, roughness: 0.8 })
+    );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
+
+    const grid = new THREE.GridHelper(arenaDepth, 10, playerColor, playerColor);
+    grid.position.y = 0.01;
+    scene.add(grid);
+
+    const boundaryMaterial = new THREE.LineBasicMaterial({ color: playerColor, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending });
+    const points = [
+        new THREE.Vector3(-arenaWidth / 2, 0.01, -arenaDepth / 2),
+        new THREE.Vector3(arenaWidth / 2, 0.01, -arenaDepth / 2),
+        new THREE.Vector3(arenaWidth / 2, 0.01, arenaDepth / 2),
+        new THREE.Vector3(-arenaWidth / 2, 0.01, arenaDepth / 2),
+        new THREE.Vector3(-arenaWidth / 2, 0.01, -arenaDepth / 2)
+    ];
+    const boundaryGeometry = new THREE.BufferGeometry().setFromPoints(points);
+    const boundaryLines = new THREE.Line(boundaryGeometry, boundaryMaterial);
+    scene.add(boundaryLines);
     
     const particleCount = 5000;
     const particles = new THREE.BufferGeometry();
@@ -265,7 +289,9 @@ const Pong3D = () => {
             playerPaddle.position.y = 1;
             playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
-            opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
+            if (!isMultiplayer) {
+              opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
+            }
             opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
             opponentPaddle.position.y = 1;
             opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
@@ -402,7 +428,7 @@ const Pong3D = () => {
       scene.clear();
       renderer.dispose();
     };
-  }, [router, settings, customization, updateDifficulty]);
+  }, [router, settings, customization, updateDifficulty, gameId]);
 
   if (!settings || !customization) {
     return (
@@ -416,7 +442,7 @@ const Pong3D = () => {
   return (
     <div className="relative h-full w-full">
       <div ref={mountRef} className="absolute inset-0 z-0" />
-      <HUD playerScore={score.player} opponentScore={score.opponent} gameState={gameState} winner={winner} />
+      <HUD playerScore={score.player} opponentScore={score.opponent} gameState={gameState} winner={winner} isMultiplayer={isMultiplayer} />
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto">
              <div className="text-center bg-black/50 p-6 rounded-lg">

@@ -65,7 +65,7 @@ export default function CustomizePage() {
               {colorOptions.map(color => (
                 <div key={`paddle-${color.value}`}>
                   <RadioGroupItem value={color.value} id={`paddle-${color.value}`} className="sr-only" />
-                  <Label htmlFor={`paddle-${color.value}`} className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary">
+                  <Label htmlFor={`paddle-${color.value}`} className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:ring-2 [&:has([data-state=checked])]:ring-primary">
                      <div className="h-8 w-16 rounded-sm mb-2" style={{ backgroundColor: color.value }} />
                     {color.name}
                   </Label>
@@ -84,7 +84,7 @@ export default function CustomizePage() {
               {colorOptions.map(color => (
                 <div key={`ball-${color.value}`}>
                   <RadioGroupItem value={color.value} id={`ball-${color.value}`} className="sr-only" />
-                  <Label htmlFor={`ball-${color.value}`} className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary">
+                  <Label htmlFor={`ball-${color.value}`} className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:ring-2 [&:has([data-state=checked])]:ring-primary">
                      <div className="h-8 w-8 rounded-full mb-2" style={{ backgroundColor: color.value }} />
                     {color.name}
                   </Label>
