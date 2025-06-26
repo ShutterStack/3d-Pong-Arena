@@ -9,6 +9,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 const defaultCustomization = {
   paddleColor: "#7DF9FF", // Electric Blue
   ballColor: "#FFFFFF", // White
+  arenaColor: "#7DF9FF", // Electric Blue
 };
 
 const colorOptions = [
@@ -28,6 +29,8 @@ export default function CustomizePage() {
       const savedCustomization = localStorage.getItem('pongCustomization');
       if (savedCustomization) {
         setCustomization(JSON.parse(savedCustomization));
+      } else {
+        localStorage.setItem('pongCustomization', JSON.stringify(defaultCustomization));
       }
     } catch (error) {
       console.error("Could not load customization, using defaults.", error);
@@ -86,6 +89,28 @@ export default function CustomizePage() {
                   <RadioGroupItem value={color.value} id={`ball-${color.value}`} className="sr-only" />
                   <Label htmlFor={`ball-${color.value}`} className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:ring-2 [&:has([data-state=checked])]:ring-primary">
                      <div className="h-8 w-8 rounded-full mb-2" style={{ backgroundColor: color.value }} />
+                    {color.name}
+                  </Label>
+                </div>
+              ))}
+            </RadioGroup>
+          </div>
+
+           <div className="space-y-4">
+            <h3 className="text-lg font-medium text-primary">Arena Color</h3>
+             <RadioGroup 
+              value={customization.arenaColor} 
+              onValueChange={(value) => handleCustomizationChange('arenaColor', value)}
+              className="grid grid-cols-2 md:grid-cols-3 gap-4"
+            >
+              {colorOptions.filter(c => c.value !== '#FFFFFF').map(color => (
+                <div key={`arena-${color.value}`}>
+                  <RadioGroupItem value={color.value} id={`arena-${color.value}`} className="sr-only" />
+                  <Label htmlFor={`arena-${color.value}`} className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary [&:has([data-state=checked])]:ring-2 [&:has([data-state=checked])]:ring-primary">
+                     <div className="h-8 w-16 rounded-sm mb-2 border" style={{ 
+                        background: `linear-gradient(45deg, ${color.value}, transparent)`,
+                        borderColor: color.value
+                      }} />
                     {color.name}
                   </Label>
                 </div>

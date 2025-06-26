@@ -8,6 +8,10 @@ import { useRouter } from 'next/navigation';
 import { adjustDifficulty, type DifficultyAdjustmentInput, type DifficultyAdjustmentOutput } from '@/ai/flows/dynamic-difficulty-adjustment';
 import HUD from './HUD';
 import { Skeleton } from '../ui/skeleton';
+import { getPlayerId } from '@/lib/player';
+import { onGameUpdate, updatePlayerPaddle, updateBall, updateScore, GameData } from '@/services/gameService';
+import { Unsubscribe } from 'firebase/firestore';
+
 
 const WINNING_SCORE = 5;
 
@@ -21,11 +25,16 @@ type GameSettings = {
 type CustomizationSettings = {
   paddleColor: string;
   ballColor: string;
+  arenaColor: string;
 }
 
 const Pong3D = ({ gameId }: { gameId: string }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+
+  const [playerId, setPlayerId] = useState('');
+  const [gameData, setGameData] = useState<GameData | null>(null);
+  const gameDataRef = useRef(gameData);
 
   const [score, setScore] = useState({ player: 0, opponent: 0 });
   const [gameState, setGameState] = useState<'start' | 'playing' | 'paused' | 'gameOver'>('start');
@@ -49,13 +58,29 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
   });
 
   useEffect(() => {
+    gameDataRef.current = gameData;
+    if (gameData) {
+      const localPlayerKey = gameData.players.player1.id === playerId ? 'player1' : 'player2';
+      const opponentKey = localPlayerKey === 'player1' ? 'player2' : 'player1';
+      setScore({
+        player: gameData.score[localPlayerKey],
+        opponent: gameData.score[opponentKey],
+      });
+      if (gameData.state === 'playing') {
+        setGameState('playing');
+      }
+    }
+  }, [gameData, playerId]);
+
+  useEffect(() => {
+    setPlayerId(getPlayerId());
     try {
       const savedSettings = localStorage.getItem('pongSettings');
       const defaultSettings = { cameraView: 'first-person', cameraShake: true, masterVolume: 80, musicVolume: 50 };
       setSettings(savedSettings ? JSON.parse(savedSettings) : defaultSettings);
 
       const savedCustomization = localStorage.getItem('pongCustomization');
-      const defaultCustomization = { paddleColor: '#7DF9FF', ballColor: '#FFFFFF' };
+      const defaultCustomization = { paddleColor: '#7DF9FF', ballColor: '#FFFFFF', arenaColor: '#7DF9FF' };
       setCustomization(savedCustomization ? JSON.parse(savedCustomization) : defaultCustomization);
 
     } catch (error) {
@@ -63,8 +88,28 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     }
   }, []);
 
+  useEffect(() => {
+    if (!isMultiplayer || !gameId) return;
+    
+    let unsubscribe: Unsubscribe;
+    try {
+      unsubscribe = onGameUpdate(gameId, (data) => {
+        setGameData(data);
+      });
+    } catch(error) {
+      console.error("Error subscribing to game updates:", error);
+      router.push('/');
+    }
+    
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
+  }, [isMultiplayer, gameId, router]);
+
   const updateDifficulty = useCallback(async () => {
-    if (isMultiplayer) return; // No AI difficulty in multiplayer
+    if (isMultiplayer) return;
     try {
       const input: DifficultyAdjustmentInput = {
         playerScore: score.player,
@@ -87,7 +132,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
 
   useEffect(() => {
-    if (!mountRef.current || !settings || !customization) return;
+    if (!mountRef.current || !settings || !customization || !playerId) return;
     const currentMount = mountRef.current;
 
     const scene = new THREE.Scene();
@@ -104,6 +149,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
     const opponentColor = 0xD400FF;
     const playerColor = new THREE.Color(customization.paddleColor);
+    const arenaColor = new THREE.Color(customization.arenaColor);
 
     const floor = new THREE.Mesh(
         new THREE.PlaneGeometry(arenaWidth, arenaDepth), 
@@ -113,11 +159,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const grid = new THREE.GridHelper(arenaDepth, 10, playerColor, playerColor);
+    const grid = new THREE.GridHelper(arenaDepth, 10, arenaColor, arenaColor);
     grid.position.y = 0.01;
     scene.add(grid);
 
-    const boundaryMaterial = new THREE.LineBasicMaterial({ color: playerColor, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending });
+    const boundaryMaterial = new THREE.LineBasicMaterial({ color: arenaColor, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending });
     const points = [
         new THREE.Vector3(-arenaWidth / 2, 0.01, -arenaDepth / 2),
         new THREE.Vector3(arenaWidth / 2, 0.01, -arenaDepth / 2),
@@ -183,7 +229,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.2));
-    const topLight = new THREE.DirectionalLight(customization.paddleColor, 0.5);
+    const topLight = new THREE.DirectionalLight(arenaColor, 0.5);
     topLight.position.set(0, 10, 0);
     scene.add(topLight);
     const bottomLight = new THREE.DirectionalLight(opponentColor, 0.5);
@@ -233,13 +279,28 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     let localScore = { player: 0, opponent: 0 };
     
     const resetBall = (direction: number) => {
-        ball.position.set(0, 1, 0);
+        const newBallState = {
+          x: 0,
+          y: 1,
+          z: 0,
+          vx: 0,
+          vy: 0,
+          vz: 0,
+        };
+
         const baseSpeed = 15;
         const speed = baseSpeed * difficultyParams.current.ballSpeedMultiplier;
         const angle = (Math.random() - 0.5) * difficultyParams.current.ballAngleRandomness * Math.PI;
-        ballVelocity.z = direction * speed * Math.cos(angle);
-        ballVelocity.x = speed * Math.sin(angle);
-        ballVelocity.y = 0;
+
+        newBallState.vz = direction * speed * Math.cos(angle);
+        newBallState.vx = speed * Math.sin(angle);
+
+        ball.position.set(newBallState.x, newBallState.y, newBallState.z);
+        ballVelocity.set(newBallState.vx, newBallState.vy, newBallState.vz);
+
+        if (isMultiplayer) {
+          updateBall(gameId, newBallState);
+        }
     };
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
@@ -258,10 +319,22 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         keysPressed.current[event.key.toLowerCase()] = false;
     };
     const onClick = () => {
+        const currentGamedata = gameDataRef.current;
         if (localGameState === 'start') {
-            localGameState = 'playing';
-            setGameState('playing');
-            currentMount.requestPointerLock();
+            if (isMultiplayer) {
+              if (currentGamedata?.players.player1 && currentGamedata?.players.player2) {
+                 localGameState = 'playing';
+                 setGameState('playing');
+                 if (currentGamedata.players.player1.id === playerId) { // Only host starts game
+                    updateScore(gameId, { player1: 0, player2: 0 }, 'playing');
+                 }
+                 currentMount.requestPointerLock();
+              }
+            } else {
+              localGameState = 'playing';
+              setGameState('playing');
+              currentMount.requestPointerLock();
+            }
         }
     }
     
@@ -275,6 +348,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const animate = () => {
         animationFrameId = requestAnimationFrame(animate);
         const delta = clock.current.getDelta();
+        const currentGamedata = gameDataRef.current;
 
         particleSystem.rotation.y += 0.0002;
 
@@ -289,14 +363,40 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             playerPaddle.position.y = 1;
             playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
-            if (!isMultiplayer) {
-              opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
-            }
-            opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
-            opponentPaddle.position.y = 1;
-            opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+            if (isMultiplayer && currentGamedata) {
+              const localPlayerKey = currentGamedata.players.player1.id === playerId ? 'player1' : 'player2';
+              const opponentKey = localPlayerKey === 'player1' ? 'player2' : 'player1';
+              const isHost = localPlayerKey === 'player1';
 
-            ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+              updatePlayerPaddle(gameId, localPlayerKey, { x: playerPaddle.position.x });
+              if (currentGamedata.paddles[opponentKey]) {
+                opponentPaddle.position.x = currentGamedata.paddles[opponentKey].x;
+              }
+              opponentPaddle.position.y = 1;
+              opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+              
+              if (isHost) {
+                 ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+                 updateBall(gameId, {
+                    x: ball.position.x,
+                    y: ball.position.y,
+                    z: ball.position.z,
+                    vx: ballVelocity.x,
+                    vy: ballVelocity.y,
+                    vz: ballVelocity.z,
+                });
+              } else if (currentGamedata.ball) {
+                ball.position.set(currentGamedata.ball.x, currentGamedata.ball.y, currentGamedata.ball.z);
+                ballVelocity.set(currentGamedata.ball.vx, currentGamedata.ball.vy, currentGamedata.ball.vz);
+              }
+            } else { // Single player
+              opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
+              opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
+              opponentPaddle.position.y = 1;
+              opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+              ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+            }
+
             ball.position.y = 1;
 
             if (ball.position.x <= -arenaWidth / 2 || ball.position.x >= arenaWidth / 2) {
@@ -319,26 +419,35 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
                 triggerEffect(ball.position);
             }
             
-            if (ball.position.z > arenaDepth / 2) {
-                localScore.opponent++;
-                setScore({...localScore});
-                scoreSound.triggerAttackRelease('A4', '8n');
-                resetBall(-1);
+            if (ball.position.z > arenaDepth / 2) { // Opponent scores
+                if (!isMultiplayer || (currentGamedata?.players.player1.id === playerId)) {
+                  localScore.opponent++;
+                  setScore({...localScore});
+                  scoreSound.triggerAttackRelease('A4', '8n');
+                  if (isMultiplayer) updateScore(gameId, { player1: localScore.player, player2: localScore.opponent });
+                  resetBall(-1);
+                }
             }
-            if (ball.position.z < -arenaDepth / 2) {
-                localScore.player++;
-                setScore({...localScore});
-                scoreSound.triggerAttackRelease('C5', '8n');
-                resetBall(1);
+            if (ball.position.z < -arenaDepth / 2) { // Player scores
+                if (!isMultiplayer || (currentGamedata?.players.player1.id === playerId)) {
+                  localScore.player++;
+                  setScore({...localScore});
+                  scoreSound.triggerAttackRelease('C5', '8n');
+                  if (isMultiplayer) updateScore(gameId, { player1: localScore.player, player2: localScore.opponent });
+                  resetBall(1);
+                }
             }
-
-            if (localScore.player >= WINNING_SCORE || localScore.opponent >= WINNING_SCORE) {
+            
+            const finalScore = isMultiplayer && currentGamedata ? currentGamedata.score : localScore;
+            if (finalScore.player1 >= WINNING_SCORE || finalScore.player2 >= WINNING_SCORE || finalScore.player >= WINNING_SCORE || finalScore.opponent >= WINNING_SCORE) {
                 localGameState = 'gameOver';
                 setGameState('gameOver');
-                const gameWinner = localScore.player >= WINNING_SCORE ? 'player' : 'opponent';
+                const pScore = isMultiplayer ? finalScore.player1 : finalScore.player;
+                const oScore = isMultiplayer ? finalScore.player2 : finalScore.opponent;
+                const gameWinner = pScore >= WINNING_SCORE ? 'player' : 'opponent';
                 setWinner(gameWinner);
                 document.exitPointerLock();
-                router.push(`/game-over?winner=${gameWinner}&playerScore=${localScore.player}&opponentScore=${localScore.opponent}`);
+                router.push(`/game-over?winner=${gameWinner}&playerScore=${pScore}&opponentScore=${oScore}`);
             }
         }
         
@@ -428,13 +537,15 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
       scene.clear();
       renderer.dispose();
     };
-  }, [router, settings, customization, updateDifficulty, gameId]);
+  }, [router, settings, customization, updateDifficulty, gameId, playerId]);
 
-  if (!settings || !customization) {
+  if (!settings || !customization || (isMultiplayer && !gameData)) {
     return (
       <div className="flex h-[calc(100vh-theme(spacing.14))] w-full flex-col items-center justify-center space-y-4 bg-background">
         <Skeleton className="h-1/2 w-4/5" />
-        <p className="text-2xl font-bold text-primary animate-pulse">LOADING ASSETS...</p>
+        <p className="text-2xl font-bold text-primary animate-pulse">
+          {isMultiplayer ? 'CONNECTING TO ARENA...' : 'LOADING ASSETS...'}
+        </p>
       </div>
     );
   }
@@ -442,9 +553,21 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
   return (
     <div className="relative h-full w-full">
       <div ref={mountRef} className="absolute inset-0 z-0" />
-      <HUD playerScore={score.player} opponentScore={score.opponent} gameState={gameState} winner={winner} isMultiplayer={isMultiplayer} />
+      <HUD 
+        playerScore={score.player} 
+        opponentScore={score.opponent} 
+        gameState={gameState} 
+        winner={winner} 
+        isMultiplayer={isMultiplayer}
+        gameData={gameData}
+       />
       {gameState === 'paused' && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto">
+        <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
+            if (mountRef.current) {
+                mountRef.current.requestPointerLock();
+                setGameState('playing');
+            }
+        }}>
              <div className="text-center bg-black/50 p-6 rounded-lg">
                 <h1 className="text-4xl font-bold text-white">Paused</h1>
                 <p className="text-muted-foreground">Click to resume</p>

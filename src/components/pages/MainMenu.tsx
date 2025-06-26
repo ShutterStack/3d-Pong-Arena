@@ -8,8 +8,11 @@ import * as THREE from 'three';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { MoveRight, Palette, Users, Swords } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import { MoveRight, Users, Swords, Copy } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { getPlayerId } from '@/lib/player';
+import { createGame, joinGame } from '@/services/gameService';
 
 export default function MainMenu() {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -17,22 +20,43 @@ export default function MainMenu() {
   const { toast } = useToast();
   const [joinCode, setJoinCode] = useState('');
   const [isMultiplayerDialogOpen, setIsMultiplayerDialogOpen] = useState(false);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [newGameInfo, setNewGameInfo] = useState({ gameId: '', shareUrl: ''});
 
-  const createMultiplayerGame = () => {
-    const gameId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    toast({
-      title: "Game Created!",
-      description: `Your game code is: ${gameId}. Share it with a friend!`,
-      duration: 10000,
-    });
-    router.push(`/game?gameId=${gameId}`);
-    setIsMultiplayerDialogOpen(false);
+  const createMultiplayerGame = async () => {
+    const playerId = getPlayerId();
+    try {
+      const gameId = await createGame(playerId);
+      const shareUrl = `${window.location.origin}/game?gameId=${gameId}`;
+      setNewGameInfo({ gameId, shareUrl });
+      setIsMultiplayerDialogOpen(false);
+      setIsShareDialogOpen(true);
+    } catch (error) {
+      console.error("Failed to create game:", error);
+      toast({
+        title: "Error",
+        description: "Could not create multiplayer game. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
-  const joinMultiplayerGame = () => {
-      if (joinCode.trim()) {
-          router.push(`/game?gameId=${joinCode.trim().toUpperCase()}`);
-          setIsMultiplayerDialogOpen(false);
+  const joinMultiplayerGame = async () => {
+      const code = joinCode.trim().toUpperCase();
+      if (code) {
+          const playerId = getPlayerId();
+          try {
+            await joinGame(code, playerId);
+            router.push(`/game?gameId=${code}`);
+            setIsMultiplayerDialogOpen(false);
+          } catch(error: any) {
+            console.error("Failed to join game:", error);
+            toast({
+              title: "Failed to Join",
+              description: error.message || "Could not join game. Check the code and try again.",
+              variant: "destructive",
+            });
+          }
       } else {
         toast({
             title: "Error",
@@ -41,6 +65,14 @@ export default function MainMenu() {
         })
       }
   };
+
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(newGameInfo.shareUrl);
+    toast({
+      title: "Copied!",
+      description: "Game link copied to clipboard.",
+    });
+  }
 
 
   useEffect(() => {
@@ -187,6 +219,36 @@ export default function MainMenu() {
           </div>
         </div>
       </div>
+       <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Multiplayer Game Created!</DialogTitle>
+            <DialogDescription>
+              Share this link with a friend. Once they join, you can start the game.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="game-code">Game Code</Label>
+              <Input id="game-code" readOnly value={newGameInfo.gameId} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="share-link">Share Link</Label>
+              <div className="flex items-center space-x-2">
+                <Input id="share-link" readOnly value={newGameInfo.shareUrl} className="flex-grow"/>
+                <Button onClick={copyToClipboard} size="icon" variant="secondary">
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={() => router.push(newGameInfo.shareUrl)}>
+              Enter Arena
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
