@@ -78,8 +78,8 @@ const Pong3D = () => {
     const currentMount = mountRef.current;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x111111);
-    const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
+    scene.fog = new THREE.FogExp2(0x000000, 0.025);
+    const camera = new THREE.PerspectiveCamera(90, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
     renderer.shadowMap.enabled = true;
@@ -97,18 +97,51 @@ const Pong3D = () => {
     floor.receiveShadow = true;
     scene.add(floor);
     
-    const grid = new THREE.GridHelper(arenaDepth, 20, primaryColor, 0x333333);
-    grid.position.y = 0.01;
-    scene.add(grid);
+    const particleCount = 5000;
+    const particles = new THREE.BufferGeometry();
+    const positions = new Float32Array(particleCount * 3);
+    const particleColors = new Float32Array(particleCount * 3);
+    const pPrimary = new THREE.Color(primaryColor);
+    const pAccent = new THREE.Color(accentColor);
+
+    for (let i = 0; i < particleCount; i++) {
+        const i3 = i * 3;
+        positions[i3] = (Math.random() - 0.5) * 300;
+        positions[i3 + 1] = (Math.random() - 0.5) * 300;
+        positions[i3 + 2] = (Math.random() - 0.5) * 300;
+        
+        const color = Math.random() > 0.5 ? pPrimary : pAccent;
+        particleColors[i3] = color.r;
+        particleColors[i3 + 1] = color.g;
+        particleColors[i3 + 2] = color.b;
+    }
+
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    particles.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+
+    const particleMaterial = new THREE.PointsMaterial({
+      size: 0.3,
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      opacity: 0.8,
+      depthWrite: false,
+    });
+
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    scene.add(particleSystem);
+
 
     const paddleGeometry = new THREE.BoxGeometry(2, 1, 0.2);
     const playerPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: primaryColor, emissive: primaryColor, emissiveIntensity: 0.5 }));
     playerPaddle.position.z = arenaDepth / 2 - 1;
+    playerPaddle.position.y = 1;
     playerPaddle.castShadow = true;
     scene.add(playerPaddle);
 
     const opponentPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: accentColor, emissive: accentColor, emissiveIntensity: 0.5 }));
     opponentPaddle.position.z = -arenaDepth / 2 + 1;
+    opponentPaddle.position.y = 1;
     opponentPaddle.castShadow = true;
     scene.add(opponentPaddle);
 
@@ -129,10 +162,10 @@ const Pong3D = () => {
     const scoreSound = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 1 }, }).toDestination();
     Tone.Master.volume.value = Tone.gainToDb(settings.masterVolume / 100);
 
-    const particleGeometry = new THREE.SphereGeometry(0.05, 8, 8);
-    const particleMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+    const pGeometry = new THREE.SphereGeometry(0.05, 8, 8);
+    const pMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
     for (let i = 0; i < 100; i++) {
-        const particle = new THREE.Mesh(particleGeometry, particleMaterial.clone());
+        const particle = new THREE.Mesh(pGeometry, pMaterial.clone());
         particle.visible = false;
         // @ts-ignore
         particle.velocity = new THREE.Vector3();
@@ -169,7 +202,7 @@ const Pong3D = () => {
     let localScore = { player: 0, opponent: 0 };
     
     const resetBall = (direction: number) => {
-        ball.position.set(0, 0.5, 0);
+        ball.position.set(0, 1, 0);
         const baseSpeed = 10;
         const speed = baseSpeed * difficultyParams.current.ballSpeedMultiplier;
         const angle = (Math.random() - 0.5) * difficultyParams.current.ballAngleRandomness * Math.PI;
@@ -202,48 +235,48 @@ const Pong3D = () => {
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('click', onClick);
 
+    const raycaster = new THREE.Raycaster();
+    const paddlePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -playerPaddle.position.z);
+
     let animationFrameId: number;
     const animate = () => {
         animationFrameId = requestAnimationFrame(animate);
         const delta = clock.current.getDelta();
 
+        particleSystem.rotation.y += 0.0002;
+
         if (localGameState === 'playing') {
             gameTime.current += delta;
             
             if (useMouse) {
-                const vector = new THREE.Vector3(mouse.x, mouse.y, 0.5);
-                vector.unproject(camera);
-                const dir = vector.sub(camera.position).normalize();
-                const distance = (playerPaddle.position.z - camera.position.z) / dir.z;
-                const pos = camera.position.clone().add(dir.multiplyScalar(distance));
-                playerPaddle.position.x = pos.x;
-                playerPaddle.position.y = pos.y;
+                raycaster.setFromCamera(mouse, camera);
+                const intersectPoint = new THREE.Vector3();
+                raycaster.ray.intersectPlane(paddlePlane, intersectPoint);
+                if (intersectPoint) {
+                    playerPaddle.position.x = intersectPoint.x;
+                }
             } else {
                 const paddleSpeed = 10 * delta;
                 if (keysPressed.current['a'] || keysPressed.current['arrowleft']) playerPaddle.position.x -= paddleSpeed;
                 if (keysPressed.current['d'] || keysPressed.current['arrowright']) playerPaddle.position.x += paddleSpeed;
-                if (keysPressed.current['w'] || keysPressed.current['arrowup']) playerPaddle.position.y += paddleSpeed;
-                if (keysPressed.current['s'] || keysPressed.current['arrowdown']) playerPaddle.position.y -= paddleSpeed;
             }
             playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + 1, arenaWidth / 2 - 1);
-            playerPaddle.position.y = THREE.MathUtils.clamp(playerPaddle.position.y, 0.5, arenaHeight - 0.5);
+            playerPaddle.position.y = 1;
             playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
             opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
             opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 1, arenaWidth/2 - 1);
+            opponentPaddle.position.y = 1;
             opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
             ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+            ball.position.y = 1;
 
             if (ball.position.x <= -arenaWidth / 2 || ball.position.x >= arenaWidth / 2) {
                 ballVelocity.x *= -1;
                 triggerEffect(ball.position);
             }
-            if (ball.position.y <= 0.2 || ball.position.y >= arenaHeight - 0.2) {
-                ballVelocity.y *= -1;
-                triggerEffect(ball.position);
-            }
-
+            
             const ballBox = new THREE.Box3().setFromObject(ball);
             const playerBox = new THREE.Box3().setFromObject(playerPaddle);
             const opponentBox = new THREE.Box3().setFromObject(opponentPaddle);
@@ -295,10 +328,10 @@ const Pong3D = () => {
 
         const camTarget = new THREE.Vector3();
         if (settings.cameraView === 'first-person') {
-            camera.position.x = playerPaddle.position.x * 0.2;
-            camera.position.y = playerPaddle.position.y * 0.1 + 2;
-            camera.position.z = playerPaddle.position.z + 4;
-            camTarget.set(0, 1, 0);
+            camera.position.x = playerPaddle.position.x * 0.1;
+            camera.position.y = 1.2;
+            camera.position.z = playerPaddle.position.z + 1.5;
+            camTarget.set(playerPaddle.position.x * 0.3, 1, 0);
         } else if (settings.cameraView === 'third-person') {
             camera.position.set(0, 8, arenaDepth / 2 + 6);
             camTarget.set(0, 2, 0);
