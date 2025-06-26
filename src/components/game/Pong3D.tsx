@@ -11,6 +11,7 @@ import { Skeleton } from '../ui/skeleton';
 
 const WINNING_SCORE = 5;
 const POWERUP_SPAWN_INTERVAL = 10; // in seconds
+const POWERUP_DURATION = 8000; // in milliseconds
 
 type GameSettings = {
   cameraView: 'first-person' | 'third-person' | 'top-down';
@@ -25,9 +26,11 @@ type CustomizationSettings = {
   arenaColor: string;
 }
 
+type PowerUpType = 'speedBoost' | 'growPaddle' | 'shrinkOpponent';
+
 type PowerUp = {
   mesh: THREE.Mesh;
-  type: 'speedBoost';
+  type: PowerUpType;
   active: boolean;
 };
 
@@ -50,10 +53,12 @@ const Pong3D = () => {
   const clock = useRef(new THREE.Clock());
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const cameraShake = useRef({ intensity: 0, time: 0 });
-  const cameraOrbit = useRef({ phi: Math.PI / 2.5, theta: Math.PI }); // Start behind player
+  const cameraOrbit = useRef({ phi: Math.PI / 3, theta: Math.PI }); // Start behind player, slightly elevated
   const particlePool = useRef<THREE.Mesh[]>([]);
   const powerUp = useRef<PowerUp | null>(null);
   const music = useRef<Tone.Loop | null>(null);
+  const playerPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
+  const opponentPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
 
 
   const difficultyParams = useRef<DifficultyAdjustmentOutput>({
@@ -188,9 +193,14 @@ const Pong3D = () => {
     scene.add(ball);
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
-    const powerupGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-    const powerupMat = new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 1, transparent: true, opacity: 0.8});
-    powerUp.current = { mesh: new THREE.Mesh(powerupGeo, powerupMat), type: 'speedBoost', active: false };
+    const powerupGeo = new THREE.IcosahedronGeometry(0.8, 1);
+    const powerupMaterials = {
+        speedBoost: new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
+        growPaddle: new THREE.MeshStandardMaterial({ color: 0x007bff, emissive: 0x007bff, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
+        shrinkOpponent: new THREE.MeshStandardMaterial({ color: 0x6f42c1, emissive: 0x6f42c1, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
+    };
+    
+    powerUp.current = { mesh: new THREE.Mesh(powerupGeo, powerupMaterials.speedBoost), type: 'speedBoost', active: false };
     powerUp.current.mesh.visible = false;
     powerUp.current.mesh.castShadow = true;
     scene.add(powerUp.current.mesh);
@@ -215,7 +225,6 @@ const Pong3D = () => {
     
     Tone.Master.volume.value = Tone.gainToDb(settings.masterVolume / 100);
 
-    // Background Music Setup
     const musicSynth = new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'fmsine' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 1 } }).toDestination();
     musicSynth.volume.value = Tone.gainToDb(settings.musicVolume / 100) - 15; // Music quieter
     const pattern = new Tone.Pattern((time, note) => {
@@ -278,7 +287,7 @@ const Pong3D = () => {
         const movementY = event.movementY || 0;
         cameraOrbit.current.theta -= movementX * 0.002;
         cameraOrbit.current.phi -= movementY * 0.002;
-        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.1, Math.PI - 0.1);
+        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.5, Math.PI - 0.5);
     };
     const onKeyDown = (event: KeyboardEvent) => { keysPressed.current[event.key.toLowerCase()] = true; };
     const onKeyUp = (event: KeyboardEvent) => { keysPressed.current[event.key.toLowerCase()] = false; };
@@ -314,7 +323,6 @@ const Pong3D = () => {
         if (gameStateRef.current === 'playing') {
             gameTime.current += delta;
             
-            // Start/Stop Music
             if (Tone.Transport.state !== 'started') {
                 Tone.Transport.start();
                 music.current?.start(0);
@@ -324,18 +332,30 @@ const Pong3D = () => {
             if (keysPressed.current['a'] || keysPressed.current['arrowleft']) playerPaddle.position.x -= paddleSpeed;
             if (keysPressed.current['d'] || keysPressed.current['arrowright']) playerPaddle.position.x += paddleSpeed;
 
-            playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + 2, arenaWidth / 2 - 2);
-            playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+            playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + playerPaddle.geometry.parameters.width * playerPaddle.scale.x / 2, arenaWidth / 2 - playerPaddle.geometry.parameters.width * playerPaddle.scale.x / 2);
+            
+            // Do not apply base paddleSizeMultiplier from difficulty AI if an effect is active
+            if (!playerPaddleEffectTimeout.current) {
+                playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+            }
+            if (!opponentPaddleEffectTimeout.current) {
+                opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+            }
 
             opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
             opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
-            opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
             ball.position.add(ballVelocity.clone().multiplyScalar(delta));
 
             // Power-up logic
             if (!powerUp.current?.active && gameTime.current - lastPowerupTime.current > POWERUP_SPAWN_INTERVAL) {
                 powerUp.current!.active = true;
                 powerUp.current!.mesh.visible = true;
+
+                const powerupTypes: PowerUpType[] = ['speedBoost', 'growPaddle', 'shrinkOpponent'];
+                const type = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
+                powerUp.current!.type = type;
+                powerUp.current!.mesh.material = powerupMaterials[type];
+                
                 powerUp.current!.mesh.position.set(
                     (Math.random() - 0.5) * (arenaWidth - 10),
                     1,
@@ -350,14 +370,34 @@ const Pong3D = () => {
                 if (ballBoxPowerup.intersectsBox(powerupBox)) {
                     powerupSound.triggerAttackRelease("C5", "8n");
                     triggerEffect(powerUp.current.mesh.position, (powerUp.current.mesh.material as THREE.MeshStandardMaterial).color);
-                    ballVelocity.multiplyScalar(1.5); // Speed boost
+                    
+                    const type = powerUp.current.type;
+
+                    if (type === 'speedBoost') {
+                        ballVelocity.multiplyScalar(1.5);
+                    } else if (type === 'growPaddle') {
+                        if (playerPaddleEffectTimeout.current) clearTimeout(playerPaddleEffectTimeout.current);
+                        playerPaddle.scale.x = 1.5;
+                        playerPaddleEffectTimeout.current = setTimeout(() => {
+                            playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+                            playerPaddleEffectTimeout.current = null;
+                        }, POWERUP_DURATION);
+                    } else if (type === 'shrinkOpponent') {
+                        if (opponentPaddleEffectTimeout.current) clearTimeout(opponentPaddleEffectTimeout.current);
+                        opponentPaddle.scale.x = 0.5;
+                        opponentPaddleEffectTimeout.current = setTimeout(() => {
+                           opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+                           opponentPaddleEffectTimeout.current = null;
+                        }, POWERUP_DURATION);
+                    }
+
                     powerUp.current.active = false;
                     powerUp.current.mesh.visible = false;
                 }
             }
             
 
-            if (!inThirdPerson && (ball.position.x <= -arenaWidth / 2 + 0.4 || ball.position.x >= arenaWidth / 2 - 0.4)) {
+            if (ball.position.x <= -arenaWidth / 2 + 0.4 || ball.position.x >= arenaWidth / 2 - 0.4) {
                 ballVelocity.x *= -1;
                 triggerEffect(ball.position);
             }
@@ -369,12 +409,12 @@ const Pong3D = () => {
             if (ballVelocity.z > 0 && ballBox.intersectsBox(playerBox)) {
                 ballVelocity.z *= -1.05;
                 ballVelocity.x += (ball.position.x - playerPaddle.position.x) * 2;
-                triggerEffect(ball.position);
+                triggerEffect(ball.position, new THREE.Color(customization.paddleColor));
             }
             if (ballVelocity.z < 0 && ballBox.intersectsBox(opponentBox)) {
                 ballVelocity.z *= -1.05;
                 ballVelocity.x += (ball.position.x - opponentPaddle.position.x) * 2;
-                triggerEffect(ball.position);
+                triggerEffect(ball.position, new THREE.Color(opponentColor));
             }
             
             if (ball.position.z > arenaDepth / 2) {
@@ -421,16 +461,19 @@ const Pong3D = () => {
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
-            const distance = 15;
-            const targetPos = playerPaddle.position.clone().add(new THREE.Vector3(0, 5, 0)); // look slightly above paddle
+            const offset = new THREE.Vector3(0, 7, 12);
+            const quaternion = new THREE.Quaternion().setFromEuler(
+              new THREE.Euler(0, cameraOrbit.current.theta, 0, 'YXZ')
+            );
+            const rotatedOffset = offset.clone().applyQuaternion(quaternion);
+            const targetPosition = playerPaddle.position.clone().add(rotatedOffset);
             
-            const camPos = new THREE.Vector3(0, 0, distance);
-            camPos.applyAxisAngle(new THREE.Vector3(1,0,0), cameraOrbit.current.phi);
-            camPos.applyAxisAngle(new THREE.Vector3(0,1,0), cameraOrbit.current.theta);
-            camPos.add(playerPaddle.position);
+            camera.position.lerp(targetPosition, 0.05);
 
-            camera.position.copy(camPos);
-            camera.lookAt(targetPos);
+            const lookAtPosition = playerPaddle.position.clone();
+            lookAtPosition.y = 1.5;
+            camera.lookAt(lookAtPosition);
+
         } else { // top-down
             camera.position.set(0, 40, 0);
             camera.lookAt(new THREE.Vector3(0, 0, 0));
@@ -479,6 +522,8 @@ const Pong3D = () => {
         music.current.stop();
         music.current.dispose();
       }
+      if(playerPaddleEffectTimeout.current) clearTimeout(playerPaddleEffectTimeout.current);
+      if(opponentPaddleEffectTimeout.current) clearTimeout(opponentPaddleEffectTimeout.current);
       Tone.Transport.stop();
       Tone.Transport.cancel();
       cancelAnimationFrame(animationFrameId);
@@ -511,7 +556,7 @@ const Pong3D = () => {
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
             try { 
-                currentMount?.requestPointerLock();
+                mountRef.current?.requestPointerLock();
             } catch (e) { console.warn("Could not re-lock pointer:", e) }
             setGameState('playing');
         }}>
