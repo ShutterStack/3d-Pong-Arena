@@ -198,14 +198,28 @@ export default function MainMenu() {
                         <Swords className="mr-2 h-5 w-5" />
                         Create Game
                     </Button>
-                    <div className="flex items-center space-x-2">
-                        <Input 
-                            placeholder="Enter Game Code" 
-                            value={joinCode}
-                            onChange={(e) => setJoinCode(e.target.value)}
-                            className="flex-grow"
-                        />
-                        <Button onClick={joinMultiplayerGame} variant="secondary">Join</Button>
+                     <div className="relative">
+                        <div className="absolute inset-0 flex items-center">
+                            <span className="w-full border-t" />
+                        </div>
+                        <div className="relative flex justify-center text-xs uppercase">
+                            <span className="bg-background px-2 text-muted-foreground">
+                            Or join a game
+                            </span>
+                        </div>
+                    </div>
+                    <div className="space-y-2">
+                         <Label htmlFor="join-code">Game Code</Label>
+                        <div className="flex items-center space-x-2">
+                            <Input
+                                id="join-code"
+                                placeholder="Enter Game Code" 
+                                value={joinCode}
+                                onChange={(e) => setJoinCode(e.target.value)}
+                                className="flex-grow"
+                            />
+                            <Button onClick={joinMultiplayerGame} variant="secondary">Join</Button>
+                        </div>
                     </div>
                 </div>
               </DialogContent>
@@ -243,7 +257,7 @@ export default function MainMenu() {
             </div>
           </div>
           <DialogFooter>
-            <Button onClick={() => router.push(newGameInfo.shareUrl)}>
+            <Button onClick={() => router.push(`/game?gameId=${newGameInfo.gameId}`)}>
               Enter Arena
             </Button>
           </DialogFooter>

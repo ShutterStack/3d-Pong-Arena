@@ -1,7 +1,7 @@
 
 'use client';
 import { db } from '@/lib/firebase';
-import { doc, setDoc, getDoc, onSnapshot, updateDoc, Unsubscribe } from 'firebase/firestore';
+import { doc, setDoc, getDoc, onSnapshot, updateDoc, Unsubscribe, serverTimestamp, writeBatch } from 'firebase/firestore';
 
 export interface Player {
   id: string;
@@ -20,6 +20,8 @@ export interface Ball {
   vz: number;
 }
 
+export type GameState = 'waiting' | 'playing' | 'paused' | 'gameOver';
+
 export interface Score {
   [key: string]: number;
   player1: number;
@@ -28,7 +30,7 @@ export interface Score {
 
 export interface GameData {
   id: string;
-  state: 'waiting' | 'playing' | 'gameOver';
+  state: GameState;
   players: {
     player1: Player;
     player2?: Player;
@@ -39,7 +41,8 @@ export interface GameData {
   };
   ball: Ball;
   score: Score;
-  createdAt: number;
+  createdAt: any;
+  updatedAt: any;
 }
 
 const GAMES_COLLECTION = 'games';
@@ -65,7 +68,8 @@ export async function createGame(playerId: string): Promise<string> {
     },
     ball: { x: 0, y: 1, z: 0, vx: 0, vy: 0, vz: 0 },
     score: { player1: 0, player2: 0 },
-    createdAt: Date.now(),
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   };
 
   await setDoc(gameRef, newGame);
@@ -88,17 +92,21 @@ export async function joinGame(gameId: string, playerId: string): Promise<void> 
 
   const gameData = gameSnap.data() as GameData;
 
-  if (gameData.players.player2 && gameData.players.player2.id !== playerId) {
-    throw new Error('This game is full.');
+  const isPlayer1 = gameData.players.player1.id === playerId;
+  const isPlayer2 = gameData.players.player2?.id === playerId;
+  
+  if(isPlayer1 || isPlayer2) {
+    // Player is already in the game, allow rejoin.
+    return;
   }
   
-  if (gameData.players.player1.id === playerId) {
-    // Host is rejoining, do nothing
-    return;
+  if (gameData.players.player2) {
+    throw new Error('This game is full.');
   }
 
   await updateDoc(gameRef, {
     'players.player2': { id: playerId },
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -127,6 +135,7 @@ export async function updatePlayerPaddle(gameId: string, playerKey: 'player1' | 
   const gameRef = doc(db, GAMES_COLLECTION, gameId);
   await updateDoc(gameRef, {
     [`paddles.${playerKey}`]: paddleData,
+    updatedAt: serverTimestamp(),
   });
 }
 
@@ -137,20 +146,34 @@ export async function updatePlayerPaddle(gameId: string, playerKey: 'player1' | 
  */
 export async function updateBall(gameId: string, ballData: Ball): Promise<void> {
   const gameRef = doc(db, GAMES_COLLECTION, gameId);
-  await updateDoc(gameRef, { ball: ballData });
+  await updateDoc(gameRef, { 
+      ball: ballData,
+      updatedAt: serverTimestamp() 
+    });
 }
 
 /**
  * Updates the score in Firestore. (Host only)
  * @param {string} gameId - The game ID.
  * @param {Score} scoreData - The new score.
- * @param {'waiting' | 'playing' | 'gameOver'} [newState] - Optional new game state.
  */
-export async function updateScore(gameId: string, scoreData: Score, newState?: 'waiting' | 'playing' | 'gameOver'): Promise<void> {
+export async function updateScore(gameId: string, scoreData: Score): Promise<void> {
   const gameRef = doc(db, GAMES_COLLECTION, gameId);
-  const updateData: { score: Score; state?: string } = { score: scoreData };
-  if (newState) {
-    updateData.state = newState;
-  }
-  await updateDoc(gameRef, updateData);
+  await updateDoc(gameRef, { 
+      score: scoreData,
+      updatedAt: serverTimestamp()
+    });
+}
+
+/**
+ * Updates the game state.
+ * @param {string} gameId - The game ID.
+ * @param {GameState} newState - The new game state.
+ */
+export async function updateGameState(gameId: string, newState: GameState): Promise<void> {
+    const gameRef = doc(db, GAMES_COLLECTION, gameId);
+    await updateDoc(gameRef, {
+        state: newState,
+        updatedAt: serverTimestamp()
+    });
 }

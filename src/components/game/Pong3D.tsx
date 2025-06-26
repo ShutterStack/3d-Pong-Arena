@@ -9,8 +9,8 @@ import { adjustDifficulty, type DifficultyAdjustmentInput, type DifficultyAdjust
 import HUD from './HUD';
 import { Skeleton } from '../ui/skeleton';
 import { getPlayerId } from '@/lib/player';
-import { onGameUpdate, updatePlayerPaddle, updateBall, updateScore, GameData } from '@/services/gameService';
-import { Unsubscribe } from 'firebase/firestore';
+import { onGameUpdate, updatePlayerPaddle, updateBall, updateScore, GameData, updateGameState } from '@/services/gameService';
+import type { Unsubscribe } from 'firebase/firestore';
 
 
 const WINNING_SCORE = 5;
@@ -47,6 +47,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
   const [customization, setCustomization] = useState<CustomizationSettings | null>(null);
   
   const isMultiplayer = gameId !== 'single-player';
+  const isHost = useRef(false);
 
   const gameTime = useRef(0);
   const clock = useRef(new THREE.Clock());
@@ -63,15 +64,21 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
   useEffect(() => {
     gameDataRef.current = gameData;
-    if (gameData) {
-      const localPlayerKey = gameData.players.player1.id === playerId ? 'player1' : 'player2';
-      const opponentKey = localPlayerKey === 'player1' ? 'player2' : 'player1';
+    if (gameData && playerId) {
+      isHost.current = gameData.players.player1.id === playerId;
+      const localPlayerKey = isHost.current ? 'player1' : 'player2';
+      const opponentKey = isHost.current ? 'player2' : 'player1';
+      
       setScore({
-        player: gameData.score[localPlayerKey],
-        opponent: gameData.score[opponentKey],
+        player: gameData.score[localPlayerKey] ?? 0,
+        opponent: gameData.score[opponentKey] ?? 0,
       });
-      if (gameData.state === 'playing' && gameStateRef.current !== 'playing') {
-        setGameState('playing');
+
+      if (gameData.state !== gameStateRef.current && gameData.state !== 'waiting') {
+        setGameState(gameData.state);
+        if(gameData.state === 'playing' && document.pointerLockElement !== mountRef.current){
+             mountRef.current?.requestPointerLock().catch(e => console.warn("Could not re-lock pointer:", e));
+        }
       }
     }
   }, [gameData, playerId]);
@@ -102,11 +109,14 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
   }, []);
 
   useEffect(() => {
-    if (!isMultiplayer || !gameId) return;
+    if (!isMultiplayer || !gameId || !playerId) return;
     
     let unsubscribe: Unsubscribe;
     try {
       unsubscribe = onGameUpdate(gameId, (data) => {
+        if (!gameDataRef.current) { // First load
+           isHost.current = data.players.player1.id === playerId;
+        }
         setGameData(data);
       });
     } catch(error) {
@@ -119,7 +129,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         unsubscribe();
       }
     };
-  }, [isMultiplayer, gameId, router]);
+  }, [isMultiplayer, gameId, router, playerId]);
 
   const updateDifficulty = useCallback(async () => {
     if (isMultiplayer) return;
@@ -150,48 +160,48 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
     const scene = new THREE.Scene();
     scene.fog = new THREE.FogExp2(0x000000, 0.025);
-    const camera = new THREE.PerspectiveCamera(90, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(75, currentMount.clientWidth / currentMount.clientHeight, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(currentMount.clientWidth, currentMount.clientHeight);
     renderer.shadowMap.enabled = true;
     currentMount.appendChild(renderer.domElement);
 
-    const arenaWidth = 24;
-    const arenaHeight = 16;
-    const arenaDepth = 40;
+    const arenaWidth = 30;
+    const arenaHeight = 18;
+    const arenaDepth = 50;
 
     const opponentColor = 0xD400FF;
-    const playerColor = new THREE.Color(customization.paddleColor);
     const arenaColor = new THREE.Color(customization.arenaColor);
 
     const floor = new THREE.Mesh(
         new THREE.PlaneGeometry(arenaWidth, arenaDepth), 
-        new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.1, roughness: 0.8 })
+        new THREE.MeshStandardMaterial({ color: 0x0A0A0A, metalness: 0.2, roughness: 0.8 })
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
     scene.add(floor);
+    
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: arenaColor, emissive: arenaColor, emissiveIntensity: 0.2, transparent: true, opacity: 0.3, side: THREE.DoubleSide });
+    const wallGeometry = new THREE.BoxGeometry(arenaWidth, arenaHeight, 0.2);
+    const sideWallGeometry = new THREE.BoxGeometry(0.2, arenaHeight, arenaDepth);
+
+    const wallLeft = new THREE.Mesh(sideWallGeometry, wallMaterial);
+    wallLeft.position.x = -arenaWidth / 2;
+    wallLeft.position.y = arenaHeight / 2;
+    scene.add(wallLeft);
+    
+    const wallRight = new THREE.Mesh(sideWallGeometry, wallMaterial);
+    wallRight.position.x = arenaWidth / 2;
+    wallRight.position.y = arenaHeight / 2;
+    scene.add(wallRight);
 
     const grid = new THREE.GridHelper(arenaDepth, 10, arenaColor, arenaColor);
     grid.position.y = 0.01;
     scene.add(grid);
-
-    const boundaryMaterial = new THREE.LineBasicMaterial({ color: arenaColor, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending });
-    const points = [
-        new THREE.Vector3(-arenaWidth / 2, 0.01, -arenaDepth / 2),
-        new THREE.Vector3(arenaWidth / 2, 0.01, -arenaDepth / 2),
-        new THREE.Vector3(arenaWidth / 2, 0.01, arenaDepth / 2),
-        new THREE.Vector3(-arenaWidth / 2, 0.01, arenaDepth / 2),
-        new THREE.Vector3(-arenaWidth / 2, 0.01, -arenaDepth / 2)
-    ];
-    const boundaryGeometry = new THREE.BufferGeometry().setFromPoints(points);
-    const boundaryLines = new THREE.Line(boundaryGeometry, boundaryMaterial);
-    scene.add(boundaryLines);
     
     const particleCount = 5000;
     const particles = new THREE.BufferGeometry();
     const positions = new Float32Array(particleCount * 3);
-    const particleColors = new Float32Array(particleCount * 3);
     const pPrimary = new THREE.Color(customization.paddleColor);
     const pAccent = new THREE.Color(opponentColor);
 
@@ -200,25 +210,17 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         positions[i3] = (Math.random() - 0.5) * 300;
         positions[i3 + 1] = (Math.random() - 0.5) * 300;
         positions[i3 + 2] = (Math.random() - 0.5) * 300;
-        
-        const color = Math.random() > 0.5 ? pPrimary : pAccent;
-        particleColors[i3] = color.r;
-        particleColors[i3 + 1] = color.g;
-        particleColors[i3 + 2] = color.b;
     }
 
     particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    particles.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
-
     const particleMaterial = new THREE.PointsMaterial({
       size: 0.3,
-      vertexColors: true,
+      color: arenaColor,
       blending: THREE.AdditiveBlending,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.5,
       depthWrite: false,
     });
-
     const particleSystem = new THREE.Points(particles, particleMaterial);
     scene.add(particleSystem);
 
@@ -238,21 +240,21 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
 
     const ball = new THREE.Mesh(new THREE.SphereGeometry(0.4, 32, 32), new THREE.MeshStandardMaterial({ color: customization.ballColor, emissive: customization.ballColor, emissiveIntensity: 0.8 }));
     ball.castShadow = true;
+    ball.position.y = 1;
     scene.add(ball);
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
     scene.add(new THREE.AmbientLight(0xffffff, 0.2));
     const topLight = new THREE.DirectionalLight(arenaColor, 0.5);
     topLight.position.set(0, 10, 0);
+    topLight.castShadow = true;
     scene.add(topLight);
-    const bottomLight = new THREE.DirectionalLight(opponentColor, 0.5);
-    bottomLight.position.set(0, -10, 0);
-    scene.add(bottomLight);
-
+    
     const hitSound = new Tone.MembraneSynth().toDestination();
     const scoreSound = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 1 }, }).toDestination();
     Tone.Master.volume.value = Tone.gainToDb(settings.masterVolume / 100);
 
+    const particlePool = useRef<THREE.Mesh[]>([]);
     const pGeometry = new THREE.SphereGeometry(0.05, 8, 8);
     const pMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
     for (let i = 0; i < 100; i++) {
@@ -272,16 +274,16 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             cameraShake.current = { intensity: 0.1, time: 0.2 };
         }
         let particlesToSpawn = 10;
-        for (const particle of particlePool.current) {
-            if (!particle.visible && particlesToSpawn > 0) {
-                particle.visible = true;
-                particle.position.copy(position);
+        for (const p of particlePool.current) {
+            if (!p.visible && particlesToSpawn > 0) {
+                p.visible = true;
+                p.position.copy(position);
                 // @ts-ignore
-                particle.velocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5);
+                p.velocity.set((Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 5);
                 // @ts-ignore
-                particle.lifetime = Math.random() * 0.5 + 0.3;
+                p.lifetime = Math.random() * 0.5 + 0.3;
                 // @ts-ignore
-                particle.material.opacity = 0.8;
+                p.material.opacity = 0.8;
                 particlesToSpawn--;
             }
         }
@@ -290,27 +292,18 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const ballVelocity = new THREE.Vector3(0, 0, -15);
     
     const resetBall = (direction: number) => {
-        const newBallState = {
-          x: 0,
-          y: 1,
-          z: 0,
-          vx: 0,
-          vy: 0,
-          vz: 0,
-        };
-
+        ball.position.set(0, 1, 0);
         const baseSpeed = 15;
         const speed = baseSpeed * difficultyParams.current.ballSpeedMultiplier;
         const angle = (Math.random() - 0.5) * difficultyParams.current.ballAngleRandomness * Math.PI;
 
-        newBallState.vz = direction * speed * Math.cos(angle);
-        newBallState.vx = speed * Math.sin(angle);
+        ballVelocity.set(speed * Math.sin(angle), 0, direction * speed * Math.cos(angle));
 
-        ball.position.set(newBallState.x, newBallState.y, newBallState.z);
-        ballVelocity.set(newBallState.vx, newBallState.vy, newBallState.vz);
-
-        if (isMultiplayer) {
-          updateBall(gameId, newBallState);
+        if (isMultiplayer && isHost.current) {
+          updateBall(gameId, {
+            x: ball.position.x, y: ball.position.y, z: ball.position.z,
+            vx: ballVelocity.x, vy: ballVelocity.y, vz: ballVelocity.z,
+          });
         }
     };
     resetBall(Math.random() > 0.5 ? 1 : -1);
@@ -332,17 +325,13 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const onClick = () => {
         if (gameStateRef.current === 'start') {
             const requestLock = () => {
-                const promise = currentMount.requestPointerLock();
-                if (promise && typeof promise.catch === 'function') {
-                    promise.catch((e: any) => console.warn("Could not request pointer lock:", e));
-                }
+                mountRef.current?.requestPointerLock().catch(e => console.warn("Could not request pointer lock:", e));
             };
 
             if (isMultiplayer) {
               if (gameDataRef.current?.players.player1 && gameDataRef.current?.players.player2) {
-                 setGameState('playing');
-                 if (gameDataRef.current.players.player1.id === playerId) { // Only host starts game
-                    updateScore(gameId, { player1: 0, player2: 0 }, 'playing');
+                 if (isHost.current) { // Only host starts game
+                    updateGameState(gameId, 'playing');
                  }
                  requestLock();
               }
@@ -375,30 +364,22 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             if (keysPressed.current['d'] || keysPressed.current['arrowright']) playerPaddle.position.x += paddleSpeed;
 
             playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + 2, arenaWidth / 2 - 2);
-            playerPaddle.position.y = 1;
             playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
 
             if (isMultiplayer && currentGamedata) {
-              const localPlayerKey = currentGamedata.players.player1.id === playerId ? 'player1' : 'player2';
-              const opponentKey = localPlayerKey === 'player1' ? 'player2' : 'player1';
-              const isHost = localPlayerKey === 'player1';
+              const localPlayerKey = isHost.current ? 'player1' : 'player2';
+              const opponentKey = isHost.current ? 'player2' : 'player1';
 
               updatePlayerPaddle(gameId, localPlayerKey, { x: playerPaddle.position.x });
               if (currentGamedata.paddles[opponentKey]) {
                 opponentPaddle.position.x = currentGamedata.paddles[opponentKey].x;
               }
-              opponentPaddle.position.y = 1;
-              opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
               
-              if (isHost) {
+              if (isHost.current) {
                  ball.position.add(ballVelocity.clone().multiplyScalar(delta));
                  updateBall(gameId, {
-                    x: ball.position.x,
-                    y: ball.position.y,
-                    z: ball.position.z,
-                    vx: ballVelocity.x,
-                    vy: ballVelocity.y,
-                    vz: ballVelocity.z,
+                    x: ball.position.x, y: ball.position.y, z: ball.position.z,
+                    vx: ballVelocity.x, vy: ballVelocity.y, vz: ballVelocity.z,
                 });
               } else if (currentGamedata.ball) {
                 ball.position.set(currentGamedata.ball.x, currentGamedata.ball.y, currentGamedata.ball.z);
@@ -407,14 +388,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             } else { // Single player
               opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.1;
               opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
-              opponentPaddle.position.y = 1;
               opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
               ball.position.add(ballVelocity.clone().multiplyScalar(delta));
             }
 
-            ball.position.y = 1;
-
-            if (ball.position.x <= -arenaWidth / 2 || ball.position.x >= arenaWidth / 2) {
+            if (ball.position.x <= -arenaWidth / 2 + 0.4 || ball.position.x >= arenaWidth / 2 - 0.4) {
                 ballVelocity.x *= -1;
                 triggerEffect(ball.position);
             }
@@ -434,45 +412,37 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
                 triggerEffect(ball.position);
             }
             
-            if (ball.position.z > arenaDepth / 2) { // Opponent scores
-                if (!isMultiplayer || (currentGamedata?.players.player1.id === playerId)) {
-                  const newScoreState = { player: scoreRef.current.player, opponent: scoreRef.current.opponent + 1 };
-                  if (isMultiplayer) updateScore(gameId, { player1: newScoreState.player, player2: newScoreState.opponent });
-                  else setScore(newScoreState);
-                  scoreSound.triggerAttackRelease('A4', '8n');
-                  resetBall(-1);
+            if (isHost.current || !isMultiplayer) {
+                if (ball.position.z > arenaDepth / 2) { // Opponent scores
+                    const newPlayerScore = isMultiplayer ? currentGamedata!.score.player1 : scoreRef.current.player;
+                    const newOpponentScore = (isMultiplayer ? currentGamedata!.score.player2 : scoreRef.current.opponent) + 1;
+                    if (isMultiplayer) updateScore(gameId, { player1: newPlayerScore, player2: newOpponentScore });
+                    else setScore({player: newPlayerScore, opponent: newOpponentScore});
+                    scoreSound.triggerAttackRelease('A4', '8n');
+                    resetBall(-1);
+                }
+                if (ball.position.z < -arenaDepth / 2) { // Player scores
+                    const newPlayerScore = (isMultiplayer ? currentGamedata!.score.player1 : scoreRef.current.player) + 1;
+                    const newOpponentScore = isMultiplayer ? currentGamedata!.score.player2 : scoreRef.current.opponent;
+                    if (isMultiplayer) updateScore(gameId, { player1: newPlayerScore, player2: newOpponentScore });
+                    else setScore({player: newPlayerScore, opponent: newOpponentScore});
+                    scoreSound.triggerAttackRelease('C5', '8n');
+                    resetBall(1);
                 }
             }
-            if (ball.position.z < -arenaDepth / 2) { // Player scores
-                if (!isMultiplayer || (currentGamedata?.players.player1.id === playerId)) {
-                  const newScoreState = { player: scoreRef.current.player + 1, opponent: scoreRef.current.opponent };
-                  if (isMultiplayer) updateScore(gameId, { player1: newScoreState.player, player2: newScoreState.opponent });
-                  else setScore(newScoreState);
-                  scoreSound.triggerAttackRelease('C5', '8n');
-                  resetBall(1);
-                }
-            }
-            
-            const finalScore = isMultiplayer && currentGamedata ? currentGamedata.score : scoreRef.current;
-            const playerWon = isMultiplayer ? finalScore.player1 >= WINNING_SCORE : finalScore.player >= WINNING_SCORE;
-            const opponentWon = isMultiplayer ? finalScore.player2 >= WINNING_SCORE : finalScore.opponent >= WINNING_SCORE;
 
-            if (playerWon || opponentWon) {
-                setGameState('gameOver');
-                
-                const localPlayerKey = isMultiplayer ? (currentGamedata!.players.player1.id === playerId ? 'player1' : 'player2') : 'player';
-                
-                const pScore = isMultiplayer ? finalScore[localPlayerKey]! : finalScore.player;
-                const oScore = isMultiplayer ? finalScore[localPlayerKey === 'player1' ? 'player2' : 'player1']! : finalScore.opponent;
+            const finalScore = scoreRef.current;
+            if (finalScore.player >= WINNING_SCORE || finalScore.opponent >= WINNING_SCORE) {
+                const gameWinner = finalScore.player >= WINNING_SCORE ? 'player' : 'opponent';
+                if (document.pointerLockElement) document.exitPointerLock();
 
-                const gameWinner = (isMultiplayer ? (pScore >= WINNING_SCORE) : playerWon) ? 'player' : 'opponent';
-                setWinner(gameWinner);
-
-                if (document.pointerLockElement) {
-                    document.exitPointerLock();
+                if(isMultiplayer && isHost.current){
+                    updateGameState(gameId, 'gameOver');
+                } else if (!isMultiplayer) {
+                    setGameState('gameOver');
                 }
                 
-                router.push(`/game-over?winner=${gameWinner}&playerScore=${pScore}&opponentScore=${oScore}`);
+                router.push(`/game-over?winner=${gameWinner}&playerScore=${finalScore.player}&opponentScore=${finalScore.opponent}`);
                 return;
             }
         }
@@ -496,23 +466,24 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
         
         if (settings.cameraView === 'first-person') {
             const pivotPoint = playerPaddle.position.clone();
-            pivotPoint.y = 1.5; // Eye level
+            pivotPoint.y = 1.5; 
             camera.position.copy(pivotPoint);
-            
-            const lookAtPoint = new THREE.Vector3(0,0,-1);
-            lookAtPoint.applyQuaternion(new THREE.Quaternion().setFromEuler(new THREE.Euler(cameraOrbit.current.phi - Math.PI/2, cameraOrbit.current.theta, 0, 'YXZ')));
-            lookAtPoint.add(pivotPoint);
-            camTarget.copy(lookAtPoint);
+            camera.rotation.set(0, 0, 0, 'YXZ');
+            camera.rotateY(cameraOrbit.current.theta);
+            camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
 
         } else if (settings.cameraView === 'third-person') {
             spherical.radius = 25;
-            const pivotPoint = new THREE.Vector3(0, 2, 0);
+            const pivotPoint = new THREE.Vector3(0, 2, playerPaddle.position.z + 15);
             const offset = new THREE.Vector3().setFromSpherical(spherical);
+            offset.y = Math.max(5, offset.y); // prevent camera from going under floor
             camera.position.copy(pivotPoint).add(offset);
             camTarget.set(0, 2, 0);
+             camera.lookAt(camTarget);
         } else { // top-down
-            camera.position.set(0, 25, 0);
+            camera.position.set(0, 30, 0);
             camTarget.set(0, 0, 0);
+             camera.lookAt(camTarget);
         }
         
         if (cameraShake.current.time > 0) {
@@ -523,7 +494,7 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
             camera.position.z += (Math.random() - 0.5) * intensity;
         }
 
-        camera.lookAt(camTarget);
+       
         renderer.render(scene, camera);
     };
 
@@ -537,15 +508,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     window.addEventListener('resize', handleResize);
 
     const onPointerLockChange = () => {
-        if (document.pointerLockElement === currentMount) {
-            if (gameStateRef.current === 'paused') {
-                setGameState('playing');
-            }
-        } else {
-             if (gameStateRef.current === 'playing' && gameTime.current > 0.1) {
-                setGameState('paused');
-            }
-        }
+      const isLocked = document.pointerLockElement === currentMount;
+      if (!isLocked && gameStateRef.current === 'playing' && gameTime.current > 0.1) {
+          setGameState('paused');
+          if (isMultiplayer) updateGameState(gameId, 'paused');
+      }
     };
     document.addEventListener('pointerlockchange', onPointerLockChange, false);
 
@@ -564,7 +531,6 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
       if (renderer.domElement.parentElement) {
         renderer.domElement.parentElement.removeChild(renderer.domElement);
       }
-      particlePool.current = [];
       scene.clear();
       renderer.dispose();
     };
@@ -595,6 +561,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
             mountRef.current?.requestPointerLock().catch(e => console.warn("Could not re-lock pointer:", e));
+            if(isMultiplayer && isHost.current){
+                updateGameState(gameId, 'playing');
+            } else if (!isMultiplayer) {
+                setGameState('playing');
+            }
         }}>
              <div className="text-center bg-black/50 p-6 rounded-lg">
                 <h1 className="text-4xl font-bold text-white">Paused</h1>
