@@ -321,6 +321,14 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
     const onClick = () => {
         const currentGamedata = gameDataRef.current;
         if (localGameState === 'start') {
+            const requestLock = () => {
+                try {
+                    currentMount.requestPointerLock();
+                } catch (e) {
+                    console.warn("Could not request pointer lock:", e);
+                }
+            };
+
             if (isMultiplayer) {
               if (currentGamedata?.players.player1 && currentGamedata?.players.player2) {
                  localGameState = 'playing';
@@ -328,12 +336,12 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
                  if (currentGamedata.players.player1.id === playerId) { // Only host starts game
                     updateScore(gameId, { player1: 0, player2: 0 }, 'playing');
                  }
-                 currentMount.requestPointerLock();
+                 requestLock();
               }
             } else {
               localGameState = 'playing';
               setGameState('playing');
-              currentMount.requestPointerLock();
+              requestLock();
             }
         }
     }
@@ -564,7 +572,11 @@ const Pong3D = ({ gameId }: { gameId: string }) => {
       {gameState === 'paused' && (
         <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/50 pointer-events-auto" onClick={() => {
             if (mountRef.current) {
-                mountRef.current.requestPointerLock();
+                try {
+                  mountRef.current.requestPointerLock();
+                } catch (e) {
+                  console.warn("Could not request pointer lock:", e);
+                }
                 setGameState('playing');
             }
         }}>
