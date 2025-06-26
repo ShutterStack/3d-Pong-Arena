@@ -100,7 +100,10 @@ export default function MainMenu() {
             3D Pong Arena
           </h1>
           <p className="max-w-xl text-lg text-muted-foreground">
-            Experience the next generation of Pong. A fully immersive, first-person 3D sports simulation.
+            Experience the next generation of Pong. A fully immersive, 3D sports simulation.
+          </p>
+          <p className="max-w-xl text-md text-primary/80 font-code">
+            Controls: Use Mouse or WASD/Arrow Keys.
           </p>
           <div className="flex justify-center gap-4 pt-4">
             <Link href="/game">

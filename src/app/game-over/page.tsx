@@ -50,10 +50,10 @@ function GameOverContent() {
           </div>
         </CardContent>
         <CardFooter className="flex justify-center gap-4 pt-6">
-          <Link href="/game">
+          <Link href="/game" passHref>
             <Button size="lg" variant="default">Play Again</Button>
           </Link>
-          <Link href="/">
+          <Link href="/" passHref>
             <Button size="lg" variant="outline">Main Menu</Button>
           </Link>
         </CardFooter>

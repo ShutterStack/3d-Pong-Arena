@@ -31,7 +31,7 @@ const HUD: React.FC<HUDProps> = ({ playerScore, opponentScore, gameState }) => {
       {gameState === 'start' && (
         <div className="text-center bg-black/50 p-6 rounded-lg">
           <h1 className="text-4xl font-bold animate-pulse">Click to Start</h1>
-          <p className="text-muted-foreground">Move your mouse to control the paddle.</p>
+          <p className="text-muted-foreground">Use Mouse or WASD/Arrow Keys to control your paddle.</p>
         </div>
       )}
 
