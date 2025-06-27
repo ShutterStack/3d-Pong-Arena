@@ -52,8 +52,7 @@
 
 ## 🚀 Get Ready to Play!
 
-> **Live Demo:** [Click here to play!](#)  
-> _👉 Replace this link with your deployed game URL._
+> **Live Demo:** [https://pong-arena-3d.vercel.app/](#)  
 
 Challenge your friends, test your reflexes, or battle the AI.  
 **This is Pong like you’ve never seen or felt before.**
