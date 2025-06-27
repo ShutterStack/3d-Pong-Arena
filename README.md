@@ -43,10 +43,9 @@
 
 | Action                | Key(s)                        |
 |-----------------------|-------------------------------|
-| Move Paddle (Vertical)| `Arrow Up` / `Arrow Down` or `W` / `S` |
-| Move Paddle (Horizontal - if enabled) | `Arrow Left` / `Arrow Right` or `A` / `D` |
-| Switch Camera View    | Press `C` or use the camera switch button |
-| Score & Win           | Deflect the ball past your opponent – first to the target score wins! |
+| Move Paddle | `Arrow Left` / `Arrow Right` or `A` / `D` |
+| Switch Camera View    | Left Mouse Button |
+| Score & Win           | Deflect the ball past your opponent – first to the target score of 5 wins! |
 
 ---
 
