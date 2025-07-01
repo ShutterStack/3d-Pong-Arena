@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { Skeleton } from '@/components/ui/skeleton';
 import { Suspense } from 'react';
 import { GamePageContent } from '@/components/game/GamePageContent';
+import { useSocket } from '@/context/SocketContext';
 
 const Pong3D = dynamic(() => import('@/components/game/Pong3D'), {
   ssr: false,
@@ -17,10 +18,12 @@ const Pong3D = dynamic(() => import('@/components/game/Pong3D'), {
 
 
 export default function GamePage() {
+  const socket = useSocket();
+
   return (
     <div className="h-[calc(100vh-theme(spacing.14))] w-full bg-black">
       <Suspense fallback={<div>Loading...</div>}>
-         <GamePageContent Pong3DComponent={Pong3D} />
+         <GamePageContent Pong3DComponent={Pong3D} socket={socket} />
       </Suspense>
     </div>
   )

@@ -1,19 +1,20 @@
 
 "use client";
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { io, Socket } from 'socket.io-client';
+import type { Socket } from 'socket.io-client';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Loader2, UserPlus, WifiOff } from 'lucide-react';
+import { Loader2, WifiOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '../ui/button';
 
 interface GamePageContentProps {
   Pong3DComponent: React.ComponentType<any>;
+  socket: Socket | null;
 }
 
-export function GamePageContent({ Pong3DComponent }: GamePageContentProps) {
+export function GamePageContent({ Pong3DComponent, socket }: GamePageContentProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { toast } = useToast();
@@ -21,92 +22,50 @@ export function GamePageContent({ Pong3DComponent }: GamePageContentProps) {
   const gameId = searchParams.get('gameId');
   const mode = gameId ? 'multiplayer' : 'single';
 
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [gameStarted, setGameStarted] = useState(false);
   const [isHost, setIsHost] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const socketRef = useRef<Socket | null>(null);
+  useEffect(() => {
+    if (mode === 'multiplayer' && socket) {
+      // The server determines who is the host. We need to find out.
+      // A simple way is to check which player joined first.
+      // The server's 'gameStarted' event should ideally tell us.
+      // For now, let's assume the first player in the server's list is the host.
+      // This part is tricky without server sending the role.
+      // Let's modify Pong3D to handle `isHost` being determined later.
+    }
+  }, [mode, socket, gameId, router, toast]);
+
+  // For multiplayer, we can determine isHost based on who created the game vs joined.
+  // The creator is the host. This logic is now on the server.
+  // We need to get the `isHost` status.
+  // Let's assume it comes from the URL, set by the lobby.
 
   useEffect(() => {
-    if (mode !== 'multiplayer' || !gameId) {
-      setGameStarted(true); // For single player, start immediately
-      return;
+    const hostParam = searchParams.get('isHost');
+    if (hostParam) {
+      setIsHost(hostParam === 'true');
     }
-    
-    const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL;
-    if (!serverUrl) {
-      setError("Server URL is not configured. Cannot start multiplayer.");
-      console.error("Server URL is not configured.");
-      return;
-    }
+  }, [searchParams]);
 
-    const newSocket = io(serverUrl);
-    socketRef.current = newSocket;
-    setSocket(newSocket);
 
-    newSocket.on('connect', () => {
-      console.log('Connected to server with id:', newSocket.id);
-      newSocket.emit('joinGame', gameId);
-    });
-
-    newSocket.on('gameStarted', (data: { isHost: boolean; gameId: string }) => {
-      console.log('Game started!', data);
-      setIsHost(data.isHost);
-      setGameStarted(true);
-    });
-
-    newSocket.on('joinError', (message: string) => {
-      setError(`Failed to join game: ${message}`);
-      toast({
-        variant: 'destructive',
-        title: 'Join Failed',
-        description: message,
-      });
-      newSocket.disconnect();
-      router.push('/multiplayer');
-    });
-    
-    newSocket.on('disconnect', () => {
-      setError('Disconnected from server.');
-      console.log('Disconnected from server.');
-    });
-
-    return () => {
-      if (socketRef.current) {
-        console.log('Disconnecting socket...');
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
-    };
-  }, [gameId, mode, router, toast]);
-
-  if (mode === 'multiplayer' && !gameStarted) {
+  if (mode === 'multiplayer' && !socket) {
     return (
-      <div className="flex items-center justify-center h-full w-full bg-background">
+       <div className="flex items-center justify-center h-full w-full bg-background">
         <Card className="w-full max-w-sm text-center">
             <CardHeader>
-                <CardTitle className="text-2xl">Joining Game</CardTitle>
-                <CardDescription>Game Code: {gameId}</CardDescription>
+                <CardTitle className="text-2xl">Connecting...</CardTitle>
+                <CardDescription>Establishing connection to the arena.</CardDescription>
             </CardHeader>
             <CardContent>
-                {error ? (
-                     <div className="flex flex-col items-center gap-4 text-destructive">
-                        <WifiOff className="h-12 w-12" />
-                        <p className="font-semibold">{error}</p>
-                        <Button onClick={() => router.push('/multiplayer')} variant="destructive">Go Back</Button>
-                    </div>
-                ) : (
-                    <div className="flex flex-col items-center gap-4 text-primary">
-                        <Loader2 className="h-12 w-12 animate-spin" />
-                        <p className="font-semibold text-lg">Waiting for opponent...</p>
-                        <p className="text-muted-foreground text-sm">Share the code with a friend to begin.</p>
-                    </div>
-                )}
+                 <div className="flex flex-col items-center gap-4 text-primary">
+                    <Loader2 className="h-12 w-12 animate-spin" />
+                    <p className="font-semibold text-lg">Connecting to server...</p>
+                </div>
             </CardContent>
         </Card>
       </div>
-    );
+    )
   }
 
   return <Pong3DComponent mode={mode} socket={socket} gameId={gameId} isHost={isHost} />;

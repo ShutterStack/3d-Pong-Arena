@@ -6,6 +6,12 @@ import path from 'path';
 import fs from 'fs/promises';
 import short from 'short-uuid';
 
+interface LeaderboardEntry {
+  name: string;
+  score: number;
+  date: string;
+}
+
 const app = express();
 const server = http.createServer(app);
 
@@ -24,7 +30,7 @@ app.use(express.json());
 const games: Record<string, any> = {};
 const leaderboardPath = path.join(__dirname, 'leaderboard.json');
 
-async function getLeaderboard() {
+async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   try {
     const data = await fs.readFile(leaderboardPath, 'utf-8');
     return JSON.parse(data);
@@ -34,7 +40,7 @@ async function getLeaderboard() {
   }
 }
 
-async function saveLeaderboard(leaderboard: any[]) {
+async function saveLeaderboard(leaderboard: LeaderboardEntry[]): Promise<void> {
   await fs.writeFile(leaderboardPath, JSON.stringify(leaderboard, null, 2));
 }
 
