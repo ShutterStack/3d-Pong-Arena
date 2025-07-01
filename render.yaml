@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: pong-3d-arena-backend
+    env: node
+    plan: free
+    buildCommand: "npm install && npm run build:server"
+    startCommand: "npm run start:server"
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.1
+      - key: FRONTEND_URL
+        value: "https://your-frontend-url.vercel.app" # Change this to your Vercel deployment URL
+        # You can also set this in the Render dashboard

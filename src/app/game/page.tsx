@@ -3,6 +3,8 @@
 
 import dynamic from 'next/dynamic'
 import { Skeleton } from '@/components/ui/skeleton';
+import { Suspense } from 'react';
+import { GamePageContent } from '@/components/game/GamePageContent';
 
 const Pong3D = dynamic(() => import('@/components/game/Pong3D'), {
   ssr: false,
@@ -17,7 +19,9 @@ const Pong3D = dynamic(() => import('@/components/game/Pong3D'), {
 export default function GamePage() {
   return (
     <div className="h-[calc(100vh-theme(spacing.14))] w-full bg-black">
-      <Pong3D />
+      <Suspense fallback={<div>Loading...</div>}>
+         <GamePageContent Pong3DComponent={Pong3D} />
+      </Suspense>
     </div>
   )
 }

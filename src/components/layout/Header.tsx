@@ -1,7 +1,8 @@
+
 "use client";
 
 import Link from "next/link";
-import { Gamepad2, Home, Settings, Palette } from "lucide-react";
+import { Gamepad2, Home, Settings, Palette, Trophy } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
@@ -10,6 +11,7 @@ export default function Header() {
 
   const navLinks = [
     { href: "/", label: "Home", icon: Home },
+    { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
     { href: "/settings", label: "Settings", icon: Settings },
     { href: "/customize", label: "Customize", icon: Palette },
   ];
@@ -30,10 +32,11 @@ export default function Header() {
                 key={link.href}
                 href={link.href}
                 className={cn(
-                  "transition-colors hover:text-primary",
+                  "transition-colors hover:text-primary flex items-center gap-2",
                   pathname === link.href ? "text-primary" : "text-muted-foreground"
                 )}
               >
+                <link.icon className="h-4 w-4" />
                 {link.label}
               </Link>
             ))}

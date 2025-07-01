@@ -5,7 +5,7 @@ import React, { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import * as THREE from 'three';
 import { Button } from '@/components/ui/button';
-import { MoveRight } from 'lucide-react';
+import { MoveRight, Users } from 'lucide-react';
 
 export default function MainMenu() {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -106,17 +106,18 @@ export default function MainMenu() {
           <p className="max-w-xl text-md text-primary/80 font-code">
             Controls: Use A/D or Arrow Keys for paddle. Use Mouse to look around.
           </p>
-          <div className="flex justify-center gap-4 pt-4">
+          <div className="flex justify-center flex-wrap gap-4 pt-4">
             <Link href="/game">
               <Button size="lg" className="font-bold">
                 Single Player
                 <MoveRight className="ml-2 h-5 w-5" />
               </Button>
             </Link>
-
-            <Link href="/settings">
+            
+            <Link href="/multiplayer">
               <Button size="lg" variant="outline">
-                Settings
+                 Multiplayer
+                <Users className="ml-2 h-5 w-5" />
               </Button>
             </Link>
           </div>

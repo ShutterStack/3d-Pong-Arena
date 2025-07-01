@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation';
 import { adjustDifficulty, type DifficultyAdjustmentInput, type DifficultyAdjustmentOutput } from '@/ai/flows/dynamic-difficulty-adjustment';
 import HUD from './HUD';
 import { Skeleton } from '../ui/skeleton';
+import type { Socket } from 'socket.io-client';
 
 const WINNING_SCORE = 5;
 const POWERUP_SPAWN_INTERVAL = 10; // in seconds
@@ -34,7 +35,19 @@ type PowerUp = {
   active: boolean;
 };
 
-const Pong3D = () => {
+type Pong3DProps = {
+    mode: 'single' | 'multiplayer';
+    socket?: Socket | null;
+    gameId?: string | null;
+    isHost?: boolean;
+}
+
+type BallState = {
+    position: { x: number, y: number, z: number };
+    velocity: { x: number, y: number, z: number };
+}
+
+const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -65,6 +78,10 @@ const Pong3D = () => {
   const playerPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
   const opponentPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  const opponentPaddleRef = useRef<THREE.Mesh>(null!);
+  const ballRef = useRef<THREE.Mesh>(null!);
+  const ballVelocityRef = useRef(new THREE.Vector3());
+
   const difficultyParams = useRef<DifficultyAdjustmentOutput>({
     ballSpeedMultiplier: 1.0,
     ballAngleRandomness: 0.1,
@@ -92,6 +109,7 @@ const Pong3D = () => {
   }, []);
 
   const updateDifficulty = useCallback(async () => {
+    if (mode !== 'single') return;
     try {
       const input: DifficultyAdjustmentInput = {
         playerScore: score.current.player,
@@ -104,13 +122,13 @@ const Pong3D = () => {
     } catch (error) {
       console.error("Failed to adjust difficulty:", error);
     }
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
-    if (gameState === 'playing' && (score.current.player > 0 || score.current.opponent > 0)) {
+    if (gameState === 'playing' && mode === 'single' && (score.current.player > 0 || score.current.opponent > 0)) {
         updateDifficulty();
     }
-  }, [currentScore, gameState, updateDifficulty]);
+  }, [currentScore, gameState, updateDifficulty, mode]);
 
 
   useEffect(() => {
@@ -191,11 +209,14 @@ const Pong3D = () => {
     opponentPaddle.position.y = 1;
     opponentPaddle.castShadow = true;
     scene.add(opponentPaddle);
+    opponentPaddleRef.current = opponentPaddle;
+
 
     const ball = new THREE.Mesh(new THREE.SphereGeometry(0.4, 32, 32), new THREE.MeshStandardMaterial({ color: customization.ballColor, emissive: customization.ballColor, emissiveIntensity: 0.8 }));
     ball.castShadow = true;
     ball.position.y = 1;
     scene.add(ball);
+    ballRef.current = ball;
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
 
     const powerupGeo = new THREE.IcosahedronGeometry(0.8, 1);
@@ -273,14 +294,18 @@ const Pong3D = () => {
         }
     };
 
-    const ballVelocity = new THREE.Vector3(0, 0, -15);
+    const ballVelocity = ballVelocityRef.current;
     
     const resetBall = (direction: number) => {
         ball.position.set(0, 1, 0);
         const baseSpeed = 15;
-        const speed = baseSpeed * difficultyParams.current.ballSpeedMultiplier;
-        const angle = (Math.random() - 0.5) * difficultyParams.current.ballAngleRandomness * Math.PI;
+        const speed = baseSpeed * (mode === 'single' ? difficultyParams.current.ballSpeedMultiplier : 1);
+        const angle = (Math.random() - 0.5) * (mode === 'single' ? difficultyParams.current.ballAngleRandomness * Math.PI : 0.2 * Math.PI);
         ballVelocity.set(speed * Math.sin(angle), 0, direction * speed * Math.cos(angle));
+
+        if (mode === 'multiplayer' && isHost) {
+            socket?.emit('ballSync', { gameId, ballState: { position: ball.position, velocity: ballVelocity } });
+        }
     };
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
@@ -357,13 +382,11 @@ const Pong3D = () => {
         if (gameStateRef.current === 'playing') {
             gameTime.current += delta;
             
-            if (gameTime.current - lastSpeedIncreaseTime.current > 15) {
+            if (mode === 'single' && gameTime.current - lastSpeedIncreaseTime.current > 15) {
                 ballVelocity.multiplyScalar(1.1);
                 lastSpeedIncreaseTime.current = gameTime.current;
                 setShowSpeedIncreaseText(true);
-                setTimeout(() => {
-                    setShowSpeedIncreaseText(false);
-                }, 2000);
+                setTimeout(() => setShowSpeedIncreaseText(false), 2000);
             }
             
             if (Tone.Transport.state !== 'started') {
@@ -375,108 +398,136 @@ const Pong3D = () => {
             if (keysPressed.current['a'] || keysPressed.current['arrowleft']) playerPaddle.position.x -= paddleSpeed;
             if (keysPressed.current['d'] || keysPressed.current['arrowright']) playerPaddle.position.x += paddleSpeed;
 
-            playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + playerPaddle.geometry.parameters.width * playerPaddle.scale.x / 2, arenaWidth / 2 - playerPaddle.geometry.parameters.width * playerPaddle.scale.x / 2);
+            const playerHalfWidth = playerPaddle.geometry.parameters.width * playerPaddle.scale.x / 2;
+            playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + playerHalfWidth, arenaWidth / 2 - playerHalfWidth);
+
+            if (mode === 'multiplayer') {
+                socket?.emit('paddleMove', { gameId, position: playerPaddle.position.x });
+            }
+
+            const isPhysicsHost = mode === 'single' || (mode === 'multiplayer' && isHost);
             
-            // Do not apply base paddleSizeMultiplier from difficulty AI if an effect is active
-            if (!playerPaddleEffectTimeout.current) {
-                playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-            }
-            if (!opponentPaddleEffectTimeout.current) {
-                opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-            }
+            if (isPhysicsHost) {
+                if (mode === 'single') {
+                     // AI Opponent Logic
+                    if (!opponentPaddleEffectTimeout.current) opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+                    opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.12 * difficultyParams.current.opponentSpeedMultiplier;
+                }
+               
+                const opponentHalfWidth = opponentPaddle.geometry.parameters.width * opponentPaddle.scale.x / 2;
+                opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + opponentHalfWidth, arenaWidth/2 - opponentHalfWidth);
 
-            opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.12 * difficultyParams.current.opponentSpeedMultiplier;
-            opponentPaddle.position.x = THREE.MathUtils.clamp(opponentPaddle.position.x, -arenaWidth/2 + 2, arenaWidth/2 - 2);
-            ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+                ball.position.add(ballVelocity.clone().multiplyScalar(delta));
 
-            // Power-up logic
-            if (!powerUp.current?.active && gameTime.current - lastPowerupTime.current > POWERUP_SPAWN_INTERVAL) {
-                powerUp.current!.active = true;
-                powerUp.current!.mesh.visible = true;
-
-                const powerupTypes: PowerUpType[] = ['speedBoost', 'growPaddle', 'shrinkOpponent'];
-                const type = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
-                powerUp.current!.type = type;
-                powerUp.current!.mesh.material = powerupMaterials[type];
+                // Ball collision with walls
+                if (ball.position.x <= -arenaWidth / 2 + 0.4 || ball.position.x >= arenaWidth / 2 - 0.4) {
+                    ballVelocity.x *= -1;
+                    triggerEffect(ball.position);
+                }
                 
-                powerUp.current!.mesh.position.set(
-                    (Math.random() - 0.5) * (arenaWidth - 10),
-                    1,
-                    (Math.random() - 0.5) * (arenaDepth - 20)
-                );
-                lastPowerupTime.current = gameTime.current;
+                // Ball collision with paddles
+                const ballBox = new THREE.Box3().setFromObject(ball);
+                const playerBox = new THREE.Box3().setFromObject(playerPaddle);
+                const opponentBox = new THREE.Box3().setFromObject(opponentPaddle);
+
+                if (ballVelocity.z > 0 && ballBox.intersectsBox(playerBox)) {
+                    ballVelocity.z *= -1.05;
+                    ballVelocity.x += (ball.position.x - playerPaddle.position.x) * 2;
+                    triggerEffect(ball.position, new THREE.Color(customization.paddleColor));
+                }
+                if (ballVelocity.z < 0 && ballBox.intersectsBox(opponentBox)) {
+                    ballVelocity.z *= -1.05;
+                    ballVelocity.x += (ball.position.x - opponentPaddle.position.x) * 2;
+                    triggerEffect(ball.position, new THREE.Color(opponentColor));
+                }
+
+                if (mode === 'multiplayer') {
+                    socket?.emit('ballSync', { gameId, ballState: { position: ball.position, velocity: ballVelocity } });
+                }
+
+                 // Score Logic
+                if (ball.position.z > arenaDepth / 2) { // Opponent scores
+                    score.current.opponent++;
+                    if (mode === 'multiplayer') socket?.emit('scoreUpdate', { gameId, score: score.current });
+                    scoreSound.triggerAttackRelease('A4', '8n');
+                    resetBall(-1);
+                }
+                if (ball.position.z < -arenaDepth / 2) { // Player scores
+                    score.current.player++;
+                    if (mode === 'multiplayer') socket?.emit('scoreUpdate', { gameId, score: score.current });
+                    scoreSound.triggerAttackRelease('C5', '8n');
+                    resetBall(1);
+                }
+                setCurrentScore({...score.current});
+
+            } else { // Client-side ball interpolation
+                 ball.position.add(ballVelocity.clone().multiplyScalar(delta));
             }
+             
+            if (mode === 'single') {
+                 // Single-player Power-up logic
+                if (!powerUp.current?.active && gameTime.current - lastPowerupTime.current > POWERUP_SPAWN_INTERVAL) {
+                    powerUp.current!.active = true;
+                    powerUp.current!.mesh.visible = true;
 
-            if (powerUp.current?.active) {
-                const ballBoxPowerup = new THREE.Box3().setFromObject(ball);
-                const powerupBox = new THREE.Box3().setFromObject(powerUp.current.mesh);
-                if (ballBoxPowerup.intersectsBox(powerupBox)) {
-                    powerupSound.triggerAttackRelease("C5", "8n");
-                    triggerEffect(powerUp.current.mesh.position, (powerUp.current.mesh.material as THREE.MeshStandardMaterial).color);
+                    const powerupTypes: PowerUpType[] = ['speedBoost', 'growPaddle', 'shrinkOpponent'];
+                    const type = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
+                    powerUp.current!.type = type;
+                    powerUp.current!.mesh.material = powerupMaterials[type];
                     
-                    const type = powerUp.current.type;
+                    powerUp.current!.mesh.position.set(
+                        (Math.random() - 0.5) * (arenaWidth - 10),
+                        1,
+                        (Math.random() - 0.5) * (arenaDepth - 20)
+                    );
+                    lastPowerupTime.current = gameTime.current;
+                }
 
-                    if (type === 'speedBoost') {
-                        ballVelocity.multiplyScalar(1.5);
-                    } else if (type === 'growPaddle') {
-                        if (playerPaddleEffectTimeout.current) clearTimeout(playerPaddleEffectTimeout.current);
-                        playerPaddle.scale.x = 1.5;
-                        playerPaddleEffectTimeout.current = setTimeout(() => {
-                            playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-                            playerPaddleEffectTimeout.current = null;
-                        }, POWERUP_DURATION);
-                    } else if (type === 'shrinkOpponent') {
-                        if (opponentPaddleEffectTimeout.current) clearTimeout(opponentPaddleEffectTimeout.current);
-                        opponentPaddle.scale.x = 0.5;
-                        opponentPaddleEffectTimeout.current = setTimeout(() => {
-                           opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-                           opponentPaddleEffectTimeout.current = null;
-                        }, POWERUP_DURATION);
+                if (powerUp.current?.active) {
+                    const ballBoxPowerup = new THREE.Box3().setFromObject(ball);
+                    const powerupBox = new THREE.Box3().setFromObject(powerUp.current.mesh);
+                    if (ballBoxPowerup.intersectsBox(powerupBox)) {
+                        powerupSound.triggerAttackRelease("C5", "8n");
+                        triggerEffect(powerUp.current.mesh.position, (powerUp.current.mesh.material as THREE.MeshStandardMaterial).color);
+                        
+                        const type = powerUp.current.type;
+
+                        if (type === 'speedBoost') {
+                            ballVelocity.multiplyScalar(1.5);
+                        } else if (type === 'growPaddle') {
+                            if (playerPaddleEffectTimeout.current) clearTimeout(playerPaddleEffectTimeout.current);
+                            playerPaddle.scale.x = 1.5;
+                            playerPaddleEffectTimeout.current = setTimeout(() => {
+                                playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+                                playerPaddleEffectTimeout.current = null;
+                            }, POWERUP_DURATION);
+                        } else if (type === 'shrinkOpponent') {
+                            if (opponentPaddleEffectTimeout.current) clearTimeout(opponentPaddleEffectTimeout.current);
+                            opponentPaddle.scale.x = 0.5;
+                            opponentPaddleEffectTimeout.current = setTimeout(() => {
+                               opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
+                               opponentPaddleEffectTimeout.current = null;
+                            }, POWERUP_DURATION);
+                        }
+
+                        powerUp.current.active = false;
+                        powerUp.current.mesh.visible = false;
                     }
-
-                    powerUp.current.active = false;
-                    powerUp.current.mesh.visible = false;
                 }
             }
-            
 
-            if (ball.position.x <= -arenaWidth / 2 + 0.4 || ball.position.x >= arenaWidth / 2 - 0.4) {
-                ballVelocity.x *= -1;
-                triggerEffect(ball.position);
-            }
-            
-            const ballBox = new THREE.Box3().setFromObject(ball);
-            const playerBox = new THREE.Box3().setFromObject(playerPaddle);
-            const opponentBox = new THREE.Box3().setFromObject(opponentPaddle);
-
-            if (ballVelocity.z > 0 && ballBox.intersectsBox(playerBox)) {
-                ballVelocity.z *= -1.05;
-                ballVelocity.x += (ball.position.x - playerPaddle.position.x) * 2;
-                triggerEffect(ball.position, new THREE.Color(customization.paddleColor));
-            }
-            if (ballVelocity.z < 0 && ballBox.intersectsBox(opponentBox)) {
-                ballVelocity.z *= -1.05;
-                ballVelocity.x += (ball.position.x - opponentPaddle.position.x) * 2;
-                triggerEffect(ball.position, new THREE.Color(opponentColor));
-            }
-            
-            if (ball.position.z > arenaDepth / 2) {
-                score.current.opponent++;
-                scoreSound.triggerAttackRelease('A4', '8n');
-                resetBall(-1);
-            }
-            if (ball.position.z < -arenaDepth / 2) {
-                score.current.player++;
-                scoreSound.triggerAttackRelease('C5', '8n');
-                resetBall(1);
-            }
-            setCurrentScore({...score.current});
 
             if (score.current.player >= WINNING_SCORE || score.current.opponent >= WINNING_SCORE) {
                 if (document.pointerLockElement) document.exitPointerLock();
                 setGameState('gameOver');
-                setWinner(score.current.player >= WINNING_SCORE ? 'player' : 'opponent');
-                router.push(`/game-over?winner=${score.current.player >= WINNING_SCORE ? 'player' : 'opponent'}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}`);
+                const winnerId = score.current.player >= WINNING_SCORE ? 'player' : 'opponent';
+                setWinner(winnerId);
+                
+                if (mode === 'multiplayer' && isHost) {
+                    socket?.emit('gameOver', { gameId, winnerId });
+                }
+                
+                router.push(`/game-over?winner=${winnerId}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=${mode}`);
                 return;
             }
         } else {
@@ -505,32 +556,16 @@ const Pong3D = () => {
 
         } else if (settings.cameraView === 'third-person') {
             const orbitRadius = 25; 
-            const pivotPoint = playerPaddle.position.clone(); 
-            pivotPoint.y = 1;
+            const pivotPoint = new THREE.Vector3(0, 1, 0);
 
             const theta = cameraOrbit.current.theta;
             const phi = cameraOrbit.current.phi;
-
-            // Start behind player and slightly elevated
-            const baseOffset = new THREE.Vector3(0, 5, 10);
-
-            // Apply orbit rotation
-            const orbitOffset = new THREE.Vector3();
-            orbitOffset.x = orbitRadius * Math.sin(phi) * Math.sin(theta);
-            orbitOffset.y = orbitRadius * Math.cos(phi);
-            orbitOffset.z = orbitRadius * Math.sin(phi) * Math.cos(theta);
-
-            // Combine pivot with base offset and orbit
-            const targetPosition = new THREE.Vector3().copy(pivotPoint);
-            targetPosition.add(baseOffset);
             
-            camera.position.lerp(targetPosition, 0.1);
-            
-            // Look at a point slightly in front of the paddle
-            const lookAtPoint = playerPaddle.position.clone();
-            lookAtPoint.y = 1;
-            lookAtPoint.z -= 5;
-            camera.lookAt(lookAtPoint);
+            camera.position.x = pivotPoint.x + orbitRadius * Math.sin(phi) * Math.sin(theta);
+            camera.position.y = pivotPoint.y + orbitRadius * Math.cos(phi);
+            camera.position.z = pivotPoint.z + orbitRadius * Math.sin(phi) * Math.cos(theta);
+
+            camera.lookAt(pivotPoint);
 
         } else { // top-down
             camera.position.set(0, 40, 0);
@@ -564,7 +599,40 @@ const Pong3D = () => {
       }
     };
     document.addEventListener('pointerlockchange', onPointerLockChange, false);
+    
+    // Multiplayer socket event listeners
+    if (mode === 'multiplayer' && socket) {
+        socket.on('opponentMoved', (position: number) => {
+            if (opponentPaddleRef.current) opponentPaddleRef.current.position.x = position;
+        });
 
+        socket.on('ballSynced', (ballState: BallState) => {
+            if (ballRef.current && !isHost) {
+                ballRef.current.position.set(ballState.position.x, ballState.position.y, ballState.position.z);
+                ballVelocityRef.current.set(ballState.velocity.x, ballState.velocity.y, ballState.velocity.z);
+            }
+        });
+
+        socket.on('scoreUpdated', (newScore: { player: number, opponent: number }) => {
+            score.current = newScore;
+            setCurrentScore({ ...newScore });
+        });
+        
+        socket.on('gameOver', ({ winnerId }) => {
+            if (document.pointerLockElement) document.exitPointerLock();
+            setGameState('gameOver');
+            setWinner(winnerId);
+            router.push(`/game-over?winner=${winnerId}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=multiplayer`);
+        });
+        
+        socket.on('opponentDisconnected', () => {
+            if(gameStateRef.current === 'gameOver') return;
+            setGameState('gameOver');
+            setWinner('player');
+            alert('Opponent disconnected. You win!');
+            router.push(`/game-over?winner=player&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=multiplayer`);
+        });
+    }
 
     return () => {
       window.removeEventListener('resize', handleResize);
@@ -591,10 +659,17 @@ const Pong3D = () => {
       if (renderer.domElement.parentElement) {
         renderer.domElement.parentElement.removeChild(renderer.domElement);
       }
+      if (socket) {
+        socket.off('opponentMoved');
+        socket.off('ballSynced');
+        socket.off('scoreUpdated');
+        socket.off('gameOver');
+        socket.off('opponentDisconnected');
+      }
       scene.clear();
       renderer.dispose();
     };
-  }, [router, settings, customization, updateDifficulty]);
+  }, [router, settings, customization, updateDifficulty, mode, socket, gameId, isHost]);
 
   if (!settings || !customization) {
     return (
