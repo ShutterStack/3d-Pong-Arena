@@ -1,5 +1,6 @@
 # 3D Pong Arena
 
+
 This is a Next.js project for a 3D Pong game, enhanced with real-time multiplayer functionality and a persistent leaderboard.
 
 ## Getting Started
