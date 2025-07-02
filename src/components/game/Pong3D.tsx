@@ -82,6 +82,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
   const opponentPaddleRef = useRef<THREE.Mesh>(null!);
   const ballRef = useRef<THREE.Mesh>(null!);
   const ballVelocityRef = useRef(new THREE.Vector3());
+  const authoritativeBallState = useRef<BallState | null>(null);
 
   const difficultyParams = useRef<DifficultyAdjustmentOutput>({
     ballSpeedMultiplier: 1.0,
@@ -465,7 +466,27 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
                 setCurrentScore({...score.current});
 
             } else { // Client-side ball interpolation for multiplayer guests
-                 ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+                // Move the ball based on its last known velocity
+                ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+    
+                // If we have an authoritative state from the server, interpolate towards it
+                if (authoritativeBallState.current) {
+                    const serverPos = new THREE.Vector3(
+                        authoritativeBallState.current.position.x,
+                        authoritativeBallState.current.position.y,
+                        authoritativeBallState.current.position.z
+                    );
+                    // Nudge the ball's position towards the server's position
+                    ball.position.lerp(serverPos, 0.25);
+    
+                    const serverVel = new THREE.Vector3(
+                        authoritativeBallState.current.velocity.x,
+                        authoritativeBallState.current.velocity.y,
+                        authoritativeBallState.current.velocity.z
+                    );
+                    // And also nudge the velocity
+                    ballVelocity.lerp(serverVel, 0.25);
+                }
             }
              
             if (mode === 'single') {
@@ -614,11 +635,8 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
         });
 
         socket.on('ballSynced', (ballState: BallState) => {
-            if (ballRef.current && !isHost) {
-                const authoritativePosition = new THREE.Vector3(ballState.position.x, ballState.position.y, ballState.position.z);
-                ballRef.current.position.lerp(authoritativePosition, 0.4); 
-
-                ballVelocityRef.current.set(ballState.velocity.x, ballState.velocity.y, ballState.velocity.z);
+            if (!isHost) {
+                authoritativeBallState.current = ballState;
             }
         });
 
