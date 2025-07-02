@@ -44,9 +44,11 @@ const leaderboardPath = path.join(__dirname, 'leaderboard.json');
 
 async function getLeaderboard(): Promise<LeaderboardEntry[]> {
   try {
+    await fs.access(leaderboardPath);
     const data = await fs.readFile(leaderboardPath, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
+    // If file doesn't exist or is empty, return empty array
     return [];
   }
 }
@@ -129,6 +131,18 @@ io.on('connection', (socket) => {
   socket.on('resume', ({ gameId }) => {
     socket.to(gameId).emit('opponentResumed');
   });
+
+  socket.on('speedIncrease', ({ gameId, ballVelocity }) => {
+    socket.to(gameId).emit('speedIncreased', ballVelocity);
+  });
+
+  socket.on('powerupSpawn', ({ gameId, powerup }) => {
+    socket.to(gameId).emit('powerupSpawned', powerup);
+  });
+
+  socket.on('powerupCollect', ({ gameId, type, collectorId }) => {
+    io.in(gameId).emit('powerupCollected', { type, collectorId });
+  });
   
   socket.on('gameOver', async ({ gameId, winnerId }) => {
     const game = games[gameId];
@@ -137,23 +151,31 @@ io.on('connection', (socket) => {
 
       const winner = game.players.find(p => p.socketId === winnerId);
       if (winner) {
+          console.log(`[Leaderboard] Game over for ${gameId}. Winner: ${winner.name}`);
           try {
+              console.log('[Leaderboard] Reading leaderboard file...');
               const leaderboard = await getLeaderboard();
               const playerIndex = leaderboard.findIndex(entry => entry.playerId === winner.playerId);
 
               if (playerIndex > -1) {
+                  console.log(`[Leaderboard] Found player ${winner.name} in leaderboard. Updating wins.`);
                   leaderboard[playerIndex].wins += 1;
               } else {
+                  console.log(`[Leaderboard] New player ${winner.name}. Adding to leaderboard.`);
                   leaderboard.push({ name: winner.name, playerId: winner.playerId, wins: 1 });
               }
 
               leaderboard.sort((a, b) => b.wins - a.wins);
               const top10 = leaderboard.slice(0, 10);
+              
+              console.log('[Leaderboard] Saving updated leaderboard...');
               await saveLeaderboard(top10);
+              console.log('[Leaderboard] Leaderboard saved successfully.');
               
               io.emit('leaderboardUpdated', top10);
+              console.log('[Leaderboard] Emitting leaderboardUpdated event.');
           } catch (error) {
-              console.error("Failed to update leaderboard:", error);
+              console.error("[Leaderboard] Failed to update leaderboard:", error);
           }
       }
 

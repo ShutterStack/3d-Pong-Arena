@@ -29,6 +29,7 @@ type CustomizationSettings = {
 type PowerUpType = 'speedBoost' | 'growPaddle' | 'shrinkOpponent';
 
 type PowerUp = {
+  id: number;
   mesh: THREE.Mesh;
   type: PowerUpType;
   active: boolean;
@@ -74,11 +75,15 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
   const isDragging = useRef(false);
   const previousMousePosition = useRef({ x: 0, y: 0 });
   const particlePool = useRef<THREE.Mesh[]>([]);
-  const powerUp = useRef<PowerUp | null>(null);
+
+  // Use an array for power-ups
+  const powerUpsRef = useRef<PowerUp[]>([]);
+
   const music = useRef<Tone.Loop | null>(null);
   const playerPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
   const opponentPaddleEffectTimeout = useRef<NodeJS.Timeout | null>(null);
 
+  const playerPaddleRef = useRef<THREE.Mesh>(null!);
   const opponentPaddleRef = useRef<THREE.Mesh>(null!);
   const ballRef = useRef<THREE.Mesh>(null!);
   const ballVelocityRef = useRef(new THREE.Vector3());
@@ -207,6 +212,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
     playerPaddle.position.y = 1;
     playerPaddle.castShadow = true;
     scene.add(playerPaddle);
+    playerPaddleRef.current = playerPaddle;
 
     const opponentPaddle = new THREE.Mesh(paddleGeometry, new THREE.MeshStandardMaterial({ color: opponentColor, emissive: opponentColor, emissiveIntensity: 0.5 }));
     opponentPaddle.position.z = -arenaDepth / 2 + 2;
@@ -222,20 +228,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
     scene.add(ball);
     ballRef.current = ball;
     ball.add(new THREE.PointLight(customization.ballColor, 2, 5));
-
-    const powerupGeo = new THREE.IcosahedronGeometry(0.8, 1);
-    const powerupMaterials = {
-        speedBoost: new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
-        growPaddle: new THREE.MeshStandardMaterial({ color: 0x007bff, emissive: 0x007bff, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
-        shrinkOpponent: new THREE.MeshStandardMaterial({ color: 0x6f42c1, emissive: 0x6f42c1, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
-    };
     
-    powerUp.current = { mesh: new THREE.Mesh(powerupGeo, powerupMaterials.speedBoost), type: 'speedBoost', active: false };
-    powerUp.current.mesh.visible = false;
-    powerUp.current.mesh.castShadow = true;
-    scene.add(powerUp.current.mesh);
-    
-
     scene.add(new THREE.AmbientLight(0xffffff, 2.0));
     const hemisphereLight = new THREE.HemisphereLight(arenaColor, 0x0A0A0A, 2.5);
     scene.add(hemisphereLight);
@@ -314,7 +307,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
     resetBall(Math.random() > 0.5 ? 1 : -1);
 
     const onMouseDown = (event: MouseEvent) => {
-        if (settings?.cameraView === 'third-person' && gameStateRef.current === 'playing') {
+        if (gameStateRef.current === 'playing' || gameStateRef.current === 'start') {
             isDragging.current = true;
             previousMousePosition.current = { x: event.clientX, y: event.clientY };
         }
@@ -328,23 +321,14 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
 
     const onMouseMove = (event: MouseEvent) => {
         if (gameStateRef.current !== 'playing') return;
-
-        if (settings.cameraView === 'first-person') {
-            if (document.pointerLockElement !== currentMount) return;
+        if (document.pointerLockElement === currentMount) { // First person
             const movementX = event.movementX || 0;
-            const movementY = event.movementY || 0;
             cameraOrbit.current.theta -= movementX * 0.002;
-            cameraOrbit.current.phi -= movementY * 0.002;
-        } else if (settings.cameraView === 'third-person') {
-            if (!isDragging.current) return;
+        } else if (isDragging.current) { // Third person drag
             const deltaX = event.clientX - previousMousePosition.current.x;
-            const deltaY = event.clientY - previousMousePosition.current.y;
             cameraOrbit.current.theta -= deltaX * 0.005;
-            cameraOrbit.current.phi -= deltaY * 0.005;
             previousMousePosition.current = { x: event.clientX, y: event.clientY };
         }
-
-        cameraOrbit.current.phi = THREE.MathUtils.clamp(cameraOrbit.current.phi, 0.5, (Math.PI / 2) + 0.4);
     };
 
     const onKeyDown = (event: KeyboardEvent) => { keysPressed.current[event.key.toLowerCase()] = true; };
@@ -374,24 +358,15 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
 
         particleSystem.rotation.y += 0.0002;
 
-        const isThirdPerson = settings.cameraView === 'third-person';
-        leftWall.visible = !isThirdPerson;
-        rightWall.visible = !isThirdPerson;
-
-        if (powerUp.current?.active) {
-            powerUp.current.mesh.rotation.y += delta;
-            powerUp.current.mesh.rotation.x += delta;
+        for (const p of powerUpsRef.current) {
+            if (p.active) {
+                p.mesh.rotation.y += delta;
+                p.mesh.rotation.x += delta;
+            }
         }
 
         if (gameStateRef.current === 'playing') {
             gameTime.current += delta;
-            
-            if (mode === 'single' && gameTime.current - lastSpeedIncreaseTime.current > 15) {
-                ballVelocity.multiplyScalar(1.1);
-                lastSpeedIncreaseTime.current = gameTime.current;
-                setShowSpeedIncreaseText(true);
-                setTimeout(() => setShowSpeedIncreaseText(false), 2000);
-            }
             
             if (Tone.Transport.state !== 'started') {
                 Tone.Transport.start();
@@ -446,6 +421,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
                     triggerEffect(ball.position, new THREE.Color(opponentColor));
                 }
 
+                 // Sync ball for multiplayer guests
                 if (mode === 'multiplayer' && socket?.connected) {
                     socket.emit('ballSync', { gameId, ballState: { position: ball.position, velocity: ballVelocity } });
                 }
@@ -465,79 +441,64 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
                 }
                 setCurrentScore({...score.current});
 
-            } else { // Client-side ball interpolation for multiplayer guests
-                // Move the ball based on its last known velocity
-                ball.position.add(ballVelocity.clone().multiplyScalar(delta));
-    
-                // If we have an authoritative state from the server, interpolate towards it
-                if (authoritativeBallState.current) {
-                    const serverPos = new THREE.Vector3(
-                        authoritativeBallState.current.position.x,
-                        authoritativeBallState.current.position.y,
-                        authoritativeBallState.current.position.z
-                    );
-                    // Nudge the ball's position towards the server's position
-                    ball.position.lerp(serverPos, 0.25);
-    
-                    const serverVel = new THREE.Vector3(
-                        authoritativeBallState.current.velocity.x,
-                        authoritativeBallState.current.velocity.y,
-                        authoritativeBallState.current.velocity.z
-                    );
-                    // And also nudge the velocity
-                    ballVelocity.lerp(serverVel, 0.25);
+                // Host-side Power-up & Speed logic
+                if (gameTime.current - lastSpeedIncreaseTime.current > 15) {
+                    ballVelocity.multiplyScalar(1.1);
+                    lastSpeedIncreaseTime.current = gameTime.current;
+                    setShowSpeedIncreaseText(true);
+                    setTimeout(() => setShowSpeedIncreaseText(false), 2000);
+                    if (mode === 'multiplayer') {
+                        socket?.emit('speedIncrease', { gameId, ballVelocity });
+                    }
                 }
-            }
-             
-            if (mode === 'single') {
-                 // Single-player Power-up logic
-                if (!powerUp.current?.active && gameTime.current - lastPowerupTime.current > POWERUP_SPAWN_INTERVAL) {
-                    powerUp.current!.active = true;
-                    powerUp.current!.mesh.visible = true;
 
+                if (!powerUpsRef.current.some(p => p.active) && gameTime.current - lastPowerupTime.current > POWERUP_SPAWN_INTERVAL) {
                     const powerupTypes: PowerUpType[] = ['speedBoost', 'growPaddle', 'shrinkOpponent'];
                     const type = powerupTypes[Math.floor(Math.random() * powerupTypes.length)];
-                    powerUp.current!.type = type;
-                    powerUp.current!.mesh.material = powerupMaterials[type];
+                    const id = Date.now();
+                    const powerupData = {
+                        id,
+                        type,
+                        position: {
+                            x: (Math.random() - 0.5) * (arenaWidth - 10),
+                            y: 1,
+                            z: (Math.random() - 0.5) * (arenaDepth - 20)
+                        }
+                    };
                     
-                    powerUp.current!.mesh.position.set(
-                        (Math.random() - 0.5) * (arenaWidth - 10),
-                        1,
-                        (Math.random() - 0.5) * (arenaDepth - 20)
-                    );
+                    if (mode === 'multiplayer') {
+                        socket?.emit('powerupSpawn', { gameId, powerup: powerupData });
+                    }
+                    // Spawn for host too
+                    spawnPowerUp(powerupData.id, powerupData.type, new THREE.Vector3(powerupData.position.x, powerupData.position.y, powerupData.position.z));
                     lastPowerupTime.current = gameTime.current;
                 }
-
-                if (powerUp.current?.active) {
-                    const ballBoxPowerup = new THREE.Box3().setFromObject(ball);
-                    const powerupBox = new THREE.Box3().setFromObject(powerUp.current.mesh);
-                    if (ballBoxPowerup.intersectsBox(powerupBox)) {
-                        powerupSound.triggerAttackRelease("C5", "8n");
-                        triggerEffect(powerUp.current.mesh.position, (powerUp.current.mesh.material as THREE.MeshStandardMaterial).color);
-                        
-                        const type = powerUp.current.type;
-
-                        if (type === 'speedBoost') {
-                            ballVelocity.multiplyScalar(1.5);
-                        } else if (type === 'growPaddle') {
-                            if (playerPaddleEffectTimeout.current) clearTimeout(playerPaddleEffectTimeout.current);
-                            playerPaddle.scale.x = 1.5;
-                            playerPaddleEffectTimeout.current = setTimeout(() => {
-                                playerPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-                                playerPaddleEffectTimeout.current = null;
-                            }, POWERUP_DURATION);
-                        } else if (type === 'shrinkOpponent') {
-                            if (opponentPaddleEffectTimeout.current) clearTimeout(opponentPaddleEffectTimeout.current);
-                            opponentPaddle.scale.x = 0.5;
-                            opponentPaddleEffectTimeout.current = setTimeout(() => {
-                               opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-                               opponentPaddleEffectTimeout.current = null;
-                            }, POWERUP_DURATION);
+                 // Host checks for powerup collection
+                for (const p of powerUpsRef.current) {
+                    if (p.active) {
+                        const ballBoxPowerup = new THREE.Box3().setFromObject(ball);
+                        const powerupBox = new THREE.Box3().setFromObject(p.mesh);
+                        if (ballBoxPowerup.intersectsBox(powerupBox)) {
+                            // The host determines who collected it based on ball direction
+                             const collectorSocketId = ballVelocity.z < 0 ? playerPaddleRef.current.uuid : opponentPaddleRef.current.uuid; // Simplified, UUID is not socketID. Needs real ID.
+                             const collector = ballVelocity.z < 0 ? socket?.id : 'opponent';
+                             
+                             if(mode === 'multiplayer'){
+                                socket?.emit('powerupCollect', { gameId, type: p.type, id: p.id });
+                             }
+                             collectPowerUp(p.id, p.type); // Host collects it
                         }
-
-                        powerUp.current.active = false;
-                        powerUp.current.mesh.visible = false;
                     }
+                }
+
+            } else { // Client-side ball interpolation for multiplayer guests
+                ball.position.add(ballVelocity.clone().multiplyScalar(delta));
+    
+                if (authoritativeBallState.current) {
+                    const serverPos = new THREE.Vector3().copy(authoritativeBallState.current.position as THREE.Vector3);
+                    ball.position.lerp(serverPos, 0.25);
+                    const serverVel = new THREE.Vector3().copy(authoritativeBallState.current.velocity as THREE.Vector3);
+                    ballVelocity.lerp(serverVel, 0.25);
                 }
             }
 
@@ -578,23 +539,22 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
             camera.rotation.set(0, 0, 0, 'YXZ');
             camera.rotateY(cameraOrbit.current.theta);
             camera.rotateX(cameraOrbit.current.phi - Math.PI / 2);
+            leftWall.visible = true;
+            rightWall.visible = true;
 
         } else if (settings.cameraView === 'third-person') {
-            const orbitRadius = 25; 
-            const pivotPoint = new THREE.Vector3(0, 1, 0);
-
-            const theta = cameraOrbit.current.theta;
-            const phi = cameraOrbit.current.phi;
-            
-            camera.position.x = pivotPoint.x + orbitRadius * Math.sin(phi) * Math.sin(theta);
-            camera.position.y = pivotPoint.y + orbitRadius * Math.cos(phi);
-            camera.position.z = pivotPoint.z + orbitRadius * Math.sin(phi) * Math.cos(theta);
-
-            camera.lookAt(pivotPoint);
+            const offset = new THREE.Vector3(0, 7, 12);
+            offset.applyAxisAngle(new THREE.Vector3(0,1,0), cameraOrbit.current.theta);
+            camera.position.copy(playerPaddle.position).add(offset);
+            camera.lookAt(playerPaddle.position);
+            leftWall.visible = false;
+            rightWall.visible = false;
 
         } else { // top-down
             camera.position.set(0, 40, 0);
             camera.lookAt(new THREE.Vector3(0, 0, 0));
+            leftWall.visible = true;
+            rightWall.visible = true;
         }
         
         if (cameraShake.current.time > 0) {
@@ -608,6 +568,56 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
         renderer.render(scene, camera);
     };
 
+    const powerupGeo = new THREE.IcosahedronGeometry(0.8, 1);
+    const powerupMaterials = {
+        speedBoost: new THREE.MeshStandardMaterial({ color: 0xffd700, emissive: 0xffd700, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
+        growPaddle: new THREE.MeshStandardMaterial({ color: 0x007bff, emissive: 0x007bff, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
+        shrinkOpponent: new THREE.MeshStandardMaterial({ color: 0x6f42c1, emissive: 0x6f42c1, emissiveIntensity: 1, transparent: true, opacity: 0.9 }),
+    };
+
+    const spawnPowerUp = (id: number, type: PowerUpType, position: THREE.Vector3) => {
+        const material = powerupMaterials[type];
+        const mesh = new THREE.Mesh(powerupGeo, material);
+        mesh.position.copy(position);
+        mesh.castShadow = true;
+
+        const powerUp: PowerUp = { id, mesh, type, active: true };
+        powerUpsRef.current.push(powerUp);
+        scene.add(mesh);
+    };
+
+    const collectPowerUp = (id: number, type: PowerUpType, collectorId?: string) => {
+        const powerUpIndex = powerUpsRef.current.findIndex(p => p.id === id);
+        if (powerUpIndex === -1) return;
+
+        const powerUp = powerUpsRef.current[powerUpIndex];
+        powerupSound.triggerAttackRelease("C5", "8n");
+        triggerEffect(powerUp.mesh.position, (powerUp.mesh.material as THREE.MeshStandardMaterial).color);
+
+        if (type === 'speedBoost') {
+            ballVelocityRef.current.multiplyScalar(1.5);
+        } else if (type === 'growPaddle') {
+            const paddleToGrow = socket?.id === collectorId ? playerPaddleRef.current : opponentPaddleRef.current;
+            if(playerPaddleEffectTimeout.current) clearTimeout(playerPaddleEffectTimeout.current);
+            paddleToGrow.scale.x = 1.5;
+            playerPaddleEffectTimeout.current = setTimeout(() => {
+                paddleToGrow.scale.x = 1.0;
+                playerPaddleEffectTimeout.current = null;
+            }, POWERUP_DURATION);
+        } else if (type === 'shrinkOpponent') {
+            const paddleToShrink = socket?.id === collectorId ? opponentPaddleRef.current : playerPaddleRef.current;
+            if(opponentPaddleEffectTimeout.current) clearTimeout(opponentPaddleEffectTimeout.current);
+            paddleToShrink.scale.x = 0.5;
+            opponentPaddleEffectTimeout.current = setTimeout(() => {
+               paddleToShrink.scale.x = 1.0;
+               opponentPaddleEffectTimeout.current = null;
+            }, POWERUP_DURATION);
+        }
+
+        scene.remove(powerUp.mesh);
+        powerUpsRef.current.splice(powerUpIndex, 1);
+    }
+    
     animate();
 
     const handleResize = () => {
@@ -631,7 +641,15 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
     // Multiplayer socket event listeners
     if (mode === 'multiplayer' && socket) {
         socket.on('opponentMoved', (position: number) => {
-            if (opponentPaddleRef.current) opponentPaddleRef.current.position.x = position;
+            if (opponentPaddleRef.current) {
+                 if (isHost) {
+                    // For host, guest paddle is opponent
+                    opponentPaddleRef.current.position.x = position;
+                } else {
+                    // For guest, host paddle is opponent. Guest paddle is controlled by guest.
+                    opponentPaddleRef.current.position.x = position;
+                }
+            }
         });
 
         socket.on('ballSynced', (ballState: BallState) => {
@@ -641,14 +659,31 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
         });
 
         socket.on('scoreUpdated', (newScore: { player: number, opponent: number }) => {
-            // In multiplayer, the host's score is player, opponent's is opponent.
-            // For the guest, this is reversed.
             if(isHost) {
               score.current = newScore;
             } else {
               score.current = { player: newScore.opponent, opponent: newScore.player };
             }
             setCurrentScore({ ...score.current });
+        });
+
+        socket.on('speedIncreased', (newVelocity: { x: number, y: number, z: number }) => {
+            if (!isHost) {
+                ballVelocityRef.current.set(newVelocity.x, newVelocity.y, newVelocity.z);
+                setShowSpeedIncreaseText(true);
+                setTimeout(() => setShowSpeedIncreaseText(false), 2000);
+            }
+        });
+
+        socket.on('powerupSpawned', (powerup: { id: number, type: PowerUpType, position: {x:number, y:number, z:number} }) => {
+             if (!isHost) {
+                spawnPowerUp(powerup.id, powerup.type, new THREE.Vector3(powerup.position.x, powerup.position.y, powerup.position.z));
+            }
+        });
+
+        socket.on('powerupCollected', ({ id, type, collectorId }: { id: number, type: PowerUpType, collectorId: string }) => {
+            // Both host and guest will receive this to apply effect
+            collectPowerUp(id, type, collectorId);
         });
         
         socket.on('opponentPaused', () => {
@@ -663,7 +698,6 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
             if (document.pointerLockElement) document.exitPointerLock();
             setGameState('gameOver');
             
-            // The winnerId is the socket.id of the winner. We need to determine if that's us.
             const finalWinner = winnerId === socket.id ? 'player' : 'opponent';
             setWinner(finalWinner);
 
@@ -712,6 +746,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerNam
         socket.off('opponentDisconnected');
         socket.off('opponentPaused');
         socket.off('opponentResumed');
+        socket.off('speedIncreased');
+        socket.off('powerupSpawned');
+        socket.off('powerupCollected');
       }
       scene.clear();
       renderer.dispose();
