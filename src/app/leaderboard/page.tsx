@@ -5,18 +5,19 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Trophy, AlertCircle } from 'lucide-react';
+import { Trophy, AlertCircle, ShieldQuestion } from 'lucide-react';
+import { useSocket } from '@/context/SocketContext';
 
 interface LeaderboardEntry {
   name: string;
-  score: number;
-  date: string;
+  wins: number;
 }
 
 export default function LeaderboardPage() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const socket = useSocket();
 
   useEffect(() => {
     const fetchLeaderboard = async () => {
@@ -42,15 +43,18 @@ export default function LeaderboardPage() {
     };
 
     fetchLeaderboard();
-  }, []);
 
-  const formatDate = (isoString: string) => {
-    return new Date(isoString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
+    if (socket) {
+      const handleLeaderboardUpdate = (newLeaderboard: LeaderboardEntry[]) => {
+        setLeaderboard(newLeaderboard);
+      };
+      socket.on('leaderboardUpdated', handleLeaderboardUpdate);
+
+      return () => {
+        socket.off('leaderboardUpdated', handleLeaderboardUpdate);
+      };
+    }
+  }, [socket]);
 
   return (
     <div className="container mx-auto py-10">
@@ -60,7 +64,7 @@ export default function LeaderboardPage() {
             <Trophy className="h-10 w-10 text-primary" />
             <div>
               <CardTitle className="text-3xl">Leaderboard</CardTitle>
-              <CardDescription>Top 10 players in the 3D Pong Arena</CardDescription>
+              <CardDescription>Top 10 multiplayer champions in the 3D Pong Arena</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -77,14 +81,19 @@ export default function LeaderboardPage() {
                 <p className="text-lg font-semibold">Could not load leaderboard</p>
                 <p className="text-sm text-center">{error}</p>
             </div>
+          ) : leaderboard.length === 0 ? (
+             <div className="flex flex-col items-center justify-center gap-4 text-muted-foreground p-8 rounded-md">
+                <ShieldQuestion className="h-12 w-12" />
+                <p className="text-lg font-semibold">The Arena is Quiet</p>
+                <p className="text-sm text-center">No champions have been crowned yet. Be the first!</p>
+            </div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[50px] text-center">Rank</TableHead>
                   <TableHead>Name</TableHead>
-                  <TableHead className="text-right">Score</TableHead>
-                  <TableHead className="text-right">Date</TableHead>
+                  <TableHead className="text-right">Wins</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -92,8 +101,7 @@ export default function LeaderboardPage() {
                   <TableRow key={index} className={index === 0 ? 'bg-primary/10 hover:bg-primary/20' : ''}>
                     <TableCell className="font-bold text-lg text-center">{index + 1}</TableCell>
                     <TableCell className="font-medium">{entry.name}</TableCell>
-                    <TableCell className="text-right font-semibold text-primary">{entry.score}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">{formatDate(entry.date)}</TableCell>
+                    <TableCell className="text-right font-semibold text-primary">{entry.wins}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

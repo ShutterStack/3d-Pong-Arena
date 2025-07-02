@@ -39,6 +39,8 @@ type Pong3DProps = {
     socket?: Socket | null;
     gameId?: string | null;
     isHost?: boolean;
+    playerName?: string | null;
+    opponentName?: string | null;
 }
 
 type BallState = {
@@ -46,7 +48,7 @@ type BallState = {
     velocity: { x: number, y: number, z: number };
 }
 
-const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
+const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost, playerName, opponentName }) => {
   const mountRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
@@ -371,9 +373,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
 
         particleSystem.rotation.y += 0.0002;
 
-        const inThirdPerson = settings.cameraView === 'third-person';
-        leftWall.visible = !inThirdPerson;
-        rightWall.visible = !inThirdPerson;
+        const isThirdPerson = settings.cameraView === 'third-person';
+        leftWall.visible = !isThirdPerson;
+        rightWall.visible = !isThirdPerson;
 
         if (powerUp.current?.active) {
             powerUp.current.mesh.rotation.y += delta;
@@ -412,7 +414,8 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
                 if (mode === 'single') {
                      // AI Opponent Logic
                     if (!opponentPaddleEffectTimeout.current) opponentPaddle.scale.x = difficultyParams.current.paddleSizeMultiplier;
-                    opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * 0.12 * difficultyParams.current.opponentSpeedMultiplier;
+                    const opponentSpeed = 0.12 * difficultyParams.current.opponentSpeedMultiplier;
+                    opponentPaddle.position.x += (ball.position.x - opponentPaddle.position.x) * opponentSpeed;
                 }
                
                 const opponentHalfWidth = opponentPaddle.geometry.parameters.width * opponentPaddle.scale.x / 2;
@@ -461,7 +464,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
                 }
                 setCurrentScore({...score.current});
 
-            } else { // Client-side ball interpolation
+            } else { // Client-side ball interpolation for multiplayer guests
                  ball.position.add(ballVelocity.clone().multiplyScalar(delta));
             }
              
@@ -525,7 +528,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
                 setWinner(winnerId);
                 
                 if (mode === 'multiplayer' && isHost && socket?.connected) {
-                    socket.emit('gameOver', { gameId, winnerId });
+                    socket.emit('gameOver', { gameId, winnerId: socket.id });
                 }
                 
                 router.push(`/game-over?winner=${winnerId}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=${mode}`);
@@ -612,7 +615,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
 
         socket.on('ballSynced', (ballState: BallState) => {
             if (ballRef.current && !isHost) {
-                ballRef.current.position.set(ballState.position.x, ballState.position.y, ballState.position.z);
+                const authoritativePosition = new THREE.Vector3(ballState.position.x, ballState.position.y, ballState.position.z);
+                ballRef.current.position.lerp(authoritativePosition, 0.4); 
+
                 ballVelocityRef.current.set(ballState.velocity.x, ballState.velocity.y, ballState.velocity.z);
             }
         });
@@ -640,11 +645,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
             if (document.pointerLockElement) document.exitPointerLock();
             setGameState('gameOver');
             
-            let finalWinner = winnerId;
-            if(!isHost){
-                finalWinner = winnerId === 'player' ? 'opponent' : 'player';
-            }
-            setWinner(finalWinner as 'player' | 'opponent');
+            // The winnerId is the socket.id of the winner. We need to determine if that's us.
+            const finalWinner = winnerId === socket.id ? 'player' : 'opponent';
+            setWinner(finalWinner);
 
             router.push(`/game-over?winner=${finalWinner}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=multiplayer`);
         });
@@ -695,7 +698,7 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
       scene.clear();
       renderer.dispose();
     };
-  }, [router, settings, customization, updateDifficulty, mode, socket, gameId, isHost, WINNING_SCORE]);
+  }, [router, settings, customization, updateDifficulty, mode, socket, gameId, isHost, WINNING_SCORE, playerName, opponentName]);
 
   if (!settings || !customization) {
     return (
@@ -713,7 +716,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
         playerScore={currentScore.player} 
         opponentScore={currentScore.opponent} 
         gameState={gameState} 
-        winner={winner} 
+        winner={winner}
+        playerName={playerName || 'Player'}
+        opponentName={opponentName || 'Opponent'}
        />
         {showSpeedIncreaseText && (
             <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">

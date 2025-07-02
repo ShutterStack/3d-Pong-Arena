@@ -1,3 +1,4 @@
+
 import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
@@ -7,8 +8,20 @@ import fs from 'fs/promises';
 
 interface LeaderboardEntry {
   name: string;
-  score: number;
-  date: string;
+  wins: number;
+  playerId: string;
+}
+
+interface Player {
+    socketId: string;
+    name: string;
+    playerId: string;
+}
+
+interface Game {
+    id: string;
+    players: Player[];
+    state: 'waiting' | 'playing';
 }
 
 const app = express();
@@ -26,7 +39,7 @@ const io = new Server(server, {
 app.use(cors({ origin: frontendUrl }));
 app.use(express.json());
 
-const games: Record<string, any> = {};
+const games: Record<string, Game> = {};
 const leaderboardPath = path.join(__dirname, 'leaderboard.json');
 
 async function getLeaderboard(): Promise<LeaderboardEntry[]> {
@@ -34,7 +47,6 @@ async function getLeaderboard(): Promise<LeaderboardEntry[]> {
     const data = await fs.readFile(leaderboardPath, 'utf-8');
     return JSON.parse(data);
   } catch (error) {
-    // If file doesn't exist, return empty array
     return [];
   }
 }
@@ -48,21 +60,6 @@ app.get('/api/leaderboard', async (req, res) => {
   res.json(leaderboard);
 });
 
-app.post('/api/leaderboard', async (req, res) => {
-  const { name, score } = req.body;
-  if (typeof name !== 'string' || typeof score !== 'number') {
-    return res.status(400).json({ message: 'Invalid name or score' });
-  }
-
-  const leaderboard = await getLeaderboard();
-  leaderboard.push({ name, score, date: new Date().toISOString() });
-  leaderboard.sort((a, b) => b.score - a.score);
-  const top10 = leaderboard.slice(0, 10);
-  await saveLeaderboard(top10);
-
-  res.status(201).json(top10);
-});
-
 function generateGameId(): string {
   let id;
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -71,7 +68,7 @@ function generateGameId(): string {
     for (let i = 0; i < 6; i++) {
       id += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-  } while (games[id]); // Ensure unique ID
+  } while (games[id]);
   return id;
 }
 
@@ -79,34 +76,37 @@ function generateGameId(): string {
 io.on('connection', (socket) => {
   console.log('a user connected:', socket.id);
 
-  socket.on('createGame', () => {
+  socket.on('createGame', ({ playerName, playerId }) => {
     const gameId = generateGameId();
     games[gameId] = {
       id: gameId,
-      players: [socket.id],
+      players: [{ socketId: socket.id, name: playerName, playerId }],
       state: 'waiting',
     };
     socket.join(gameId);
     socket.emit('gameCreated', gameId);
-    console.log(`Game ${gameId} created by ${socket.id}`);
+    console.log(`Game ${gameId} created by ${playerName} (${socket.id})`);
   });
 
-  socket.on('joinGame', (gameId) => {
+  socket.on('joinGame', ({ gameId, playerName, playerId }) => {
     const game = games[gameId];
     if (game && game.players.length === 1) {
-      game.players.push(socket.id);
+      game.players.push({ socketId: socket.id, name: playerName, playerId });
       socket.join(gameId);
       game.state = 'playing';
 
-      // Player 1 is host (index 0)
-      io.to(game.players[0]).emit('gameStarted', { isHost: true, gameId });
-      // Player 2 is guest (index 1)
-      io.to(game.players[1]).emit('gameStarted', { isHost: false, gameId });
+      const hostPlayer = game.players[0];
+      const guestPlayer = game.players[1];
+
+      // Player 1 is host
+      io.to(hostPlayer.socketId).emit('gameStarted', { isHost: true, gameId, playerName: hostPlayer.name, opponentName: guestPlayer.name });
+      // Player 2 is guest
+      io.to(guestPlayer.socketId).emit('gameStarted', { isHost: false, gameId, playerName: guestPlayer.name, opponentName: hostPlayer.name });
       
-      console.log(`${socket.id} joined game ${gameId}. Starting game.`);
+      console.log(`${playerName} (${socket.id}) joined game ${gameId}. Starting game.`);
     } else {
       socket.emit('joinError', 'Game not found or is full.');
-      console.log(`Join error for ${socket.id} on game ${gameId}`);
+      console.log(`Join error for ${playerName} (${socket.id}) on game ${gameId}`);
     }
   });
 
@@ -130,12 +130,35 @@ io.on('connection', (socket) => {
     socket.to(gameId).emit('opponentResumed');
   });
   
-  socket.on('gameOver', ({ gameId, winnerId }) => {
+  socket.on('gameOver', async ({ gameId, winnerId }) => {
     const game = games[gameId];
     if (game) {
       io.in(gameId).emit('gameOver', { winnerId });
+
+      const winner = game.players.find(p => p.socketId === winnerId);
+      if (winner) {
+          try {
+              const leaderboard = await getLeaderboard();
+              const playerIndex = leaderboard.findIndex(entry => entry.playerId === winner.playerId);
+
+              if (playerIndex > -1) {
+                  leaderboard[playerIndex].wins += 1;
+              } else {
+                  leaderboard.push({ name: winner.name, playerId: winner.playerId, wins: 1 });
+              }
+
+              leaderboard.sort((a, b) => b.wins - a.wins);
+              const top10 = leaderboard.slice(0, 10);
+              await saveLeaderboard(top10);
+              
+              io.emit('leaderboardUpdated', top10);
+          } catch (error) {
+              console.error("Failed to update leaderboard:", error);
+          }
+      }
+
       delete games[gameId];
-      console.log(`Game ${gameId} over. Winner: ${winnerId}`);
+      console.log(`Game ${gameId} over. Winner: ${winner ? winner.name : 'Unknown'}`);
     }
   });
 
@@ -144,7 +167,7 @@ io.on('connection', (socket) => {
     console.log('user disconnected:', socket.id);
     for (const gameId in games) {
       const game = games[gameId];
-      const playerIndex = game.players.indexOf(socket.id);
+      const playerIndex = game.players.findIndex(p => p.socketId === socket.id);
       if (playerIndex !== -1) {
         // Notify other player
         socket.to(gameId).emit('opponentDisconnected');
