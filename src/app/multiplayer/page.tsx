@@ -32,7 +32,7 @@ export default function MultiplayerPage() {
         };
 
         const onGameStarted = (data: { gameId: string; isHost: boolean }) => {
-            router.push(`/game?gameId=${data.gameId}`);
+            router.push(`/game?gameId=${data.gameId}&isHost=${data.isHost}`);
         };
 
         const onJoinError = (message: string) => {
@@ -86,7 +86,7 @@ export default function MultiplayerPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="flex w-full items-center space-x-2">
-                             <Input value={gameId} readOnly className="font-mono text-lg" />
+                             <Input value={gameId} readOnly className="font-mono text-lg text-center tracking-[0.2em]" />
                              <Button variant="outline" size="icon" onClick={handleCopy}>
                                 {copied ? <Check className="h-4 w-4 text-primary" /> : <Copy className="h-4 w-4" />}
                              </Button>
@@ -126,9 +126,11 @@ export default function MultiplayerPage() {
                     <form onSubmit={handleJoinGame} className="space-y-2">
                         <Input
                             value={joinCode}
-                            onChange={(e) => setJoinCode(e.target.value)}
-                            placeholder="Enter game code..."
+                            onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                            placeholder="ENTER 6-DIGIT CODE"
+                            maxLength={6}
                             disabled={isJoining || !socket}
+                            className="font-mono text-center tracking-widest text-lg"
                         />
                          <Button type="submit" variant="secondary" disabled={isJoining || !socket || !joinCode.trim()} className="w-full">
                             {isJoining && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}

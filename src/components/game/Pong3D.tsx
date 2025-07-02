@@ -10,7 +10,6 @@ import HUD from './HUD';
 import { Skeleton } from '../ui/skeleton';
 import type { Socket } from 'socket.io-client';
 
-const WINNING_SCORE = 5;
 const POWERUP_SPAWN_INTERVAL = 10; // in seconds
 const POWERUP_DURATION = 8000; // in milliseconds
 
@@ -88,6 +87,8 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
     paddleSizeMultiplier: 1.0,
     opponentSpeedMultiplier: 1.0,
   });
+
+  const WINNING_SCORE = mode === 'multiplayer' ? 10 : 5;
   
   useEffect(() => {
     gameStateRef.current = gameState;
@@ -401,8 +402,8 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
             const playerHalfWidth = playerPaddle.geometry.parameters.width * playerPaddle.scale.x / 2;
             playerPaddle.position.x = THREE.MathUtils.clamp(playerPaddle.position.x, -arenaWidth / 2 + playerHalfWidth, arenaWidth / 2 - playerHalfWidth);
 
-            if (mode === 'multiplayer') {
-                socket?.emit('paddleMove', { gameId, position: playerPaddle.position.x });
+            if (mode === 'multiplayer' && socket?.connected) {
+                socket.emit('paddleMove', { gameId, position: playerPaddle.position.x });
             }
 
             const isPhysicsHost = mode === 'single' || (mode === 'multiplayer' && isHost);
@@ -441,20 +442,20 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
                     triggerEffect(ball.position, new THREE.Color(opponentColor));
                 }
 
-                if (mode === 'multiplayer') {
-                    socket?.emit('ballSync', { gameId, ballState: { position: ball.position, velocity: ballVelocity } });
+                if (mode === 'multiplayer' && socket?.connected) {
+                    socket.emit('ballSync', { gameId, ballState: { position: ball.position, velocity: ballVelocity } });
                 }
 
                  // Score Logic
                 if (ball.position.z > arenaDepth / 2) { // Opponent scores
                     score.current.opponent++;
-                    if (mode === 'multiplayer') socket?.emit('scoreUpdate', { gameId, score: score.current });
+                    if (mode === 'multiplayer' && socket?.connected) socket.emit('scoreUpdate', { gameId, score: score.current });
                     scoreSound.triggerAttackRelease('A4', '8n');
                     resetBall(-1);
                 }
                 if (ball.position.z < -arenaDepth / 2) { // Player scores
                     score.current.player++;
-                    if (mode === 'multiplayer') socket?.emit('scoreUpdate', { gameId, score: score.current });
+                    if (mode === 'multiplayer' && socket?.connected) socket.emit('scoreUpdate', { gameId, score: score.current });
                     scoreSound.triggerAttackRelease('C5', '8n');
                     resetBall(1);
                 }
@@ -523,8 +524,8 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
                 const winnerId = score.current.player >= WINNING_SCORE ? 'player' : 'opponent';
                 setWinner(winnerId);
                 
-                if (mode === 'multiplayer' && isHost) {
-                    socket?.emit('gameOver', { gameId, winnerId });
+                if (mode === 'multiplayer' && isHost && socket?.connected) {
+                    socket.emit('gameOver', { gameId, winnerId });
                 }
                 
                 router.push(`/game-over?winner=${winnerId}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=${mode}`);
@@ -596,6 +597,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
       const isLocked = document.pointerLockElement === currentMount;
       if (!isLocked && gameStateRef.current === 'playing' && gameTime.current > 0.1 && settings.cameraView === 'first-person') {
           setGameState('paused');
+          if (mode === 'multiplayer' && socket) {
+            socket.emit('pause', { gameId });
+          }
       }
     };
     document.addEventListener('pointerlockchange', onPointerLockChange, false);
@@ -614,15 +618,35 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
         });
 
         socket.on('scoreUpdated', (newScore: { player: number, opponent: number }) => {
-            score.current = newScore;
-            setCurrentScore({ ...newScore });
+            // In multiplayer, the host's score is player, opponent's is opponent.
+            // For the guest, this is reversed.
+            if(isHost) {
+              score.current = newScore;
+            } else {
+              score.current = { player: newScore.opponent, opponent: newScore.player };
+            }
+            setCurrentScore({ ...score.current });
         });
         
+        socket.on('opponentPaused', () => {
+            setGameState('paused');
+        });
+
+        socket.on('opponentResumed', () => {
+            setGameState('playing');
+        });
+
         socket.on('gameOver', ({ winnerId }) => {
             if (document.pointerLockElement) document.exitPointerLock();
             setGameState('gameOver');
-            setWinner(winnerId);
-            router.push(`/game-over?winner=${winnerId}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=multiplayer`);
+            
+            let finalWinner = winnerId;
+            if(!isHost){
+                finalWinner = winnerId === 'player' ? 'opponent' : 'player';
+            }
+            setWinner(finalWinner as 'player' | 'opponent');
+
+            router.push(`/game-over?winner=${finalWinner}&playerScore=${score.current.player}&opponentScore=${score.current.opponent}&mode=multiplayer`);
         });
         
         socket.on('opponentDisconnected', () => {
@@ -665,11 +689,13 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
         socket.off('scoreUpdated');
         socket.off('gameOver');
         socket.off('opponentDisconnected');
+        socket.off('opponentPaused');
+        socket.off('opponentResumed');
       }
       scene.clear();
       renderer.dispose();
     };
-  }, [router, settings, customization, updateDifficulty, mode, socket, gameId, isHost]);
+  }, [router, settings, customization, updateDifficulty, mode, socket, gameId, isHost, WINNING_SCORE]);
 
   if (!settings || !customization) {
     return (
@@ -708,6 +734,9 @@ const Pong3D: React.FC<Pong3DProps> = ({ mode, socket, gameId, isHost }) => {
                 }
             }
             setGameState('playing');
+            if (mode === 'multiplayer' && socket) {
+              socket.emit('resume', { gameId });
+            }
         }}>
              <div className="text-center bg-black/50 p-6 rounded-lg">
                 <h1 className="text-4xl font-bold text-white">Paused</h1>

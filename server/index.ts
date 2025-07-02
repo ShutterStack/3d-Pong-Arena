@@ -4,7 +4,6 @@ import { Server } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs/promises';
-import short from 'short-uuid';
 
 interface LeaderboardEntry {
   name: string;
@@ -64,12 +63,24 @@ app.post('/api/leaderboard', async (req, res) => {
   res.status(201).json(top10);
 });
 
+function generateGameId(): string {
+  let id;
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  do {
+    id = '';
+    for (let i = 0; i < 6; i++) {
+      id += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+  } while (games[id]); // Ensure unique ID
+  return id;
+}
+
 
 io.on('connection', (socket) => {
   console.log('a user connected:', socket.id);
 
   socket.on('createGame', () => {
-    const gameId = short.generate();
+    const gameId = generateGameId();
     games[gameId] = {
       id: gameId,
       players: [socket.id],
@@ -109,6 +120,14 @@ io.on('connection', (socket) => {
 
   socket.on('scoreUpdate', ({ gameId, score }) => {
     io.in(gameId).emit('scoreUpdated', score);
+  });
+
+  socket.on('pause', ({ gameId }) => {
+    socket.to(gameId).emit('opponentPaused');
+  });
+
+  socket.on('resume', ({ gameId }) => {
+    socket.to(gameId).emit('opponentResumed');
   });
   
   socket.on('gameOver', ({ gameId, winnerId }) => {
