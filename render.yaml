@@ -9,5 +9,5 @@ services:
       - key: NODE_VERSION
         value: 20.11.1
       - key: FRONTEND_URL
-        value: "https://your-frontend-url.vercel.app" # Change this to your Vercel deployment URL
+        value: "https://pong-arena-3d.vercel.app/" # Change this to your Vercel deployment URL
         # You can also set this in the Render dashboard
